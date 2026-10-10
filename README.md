@@ -151,6 +151,8 @@ node ~/agent-hub/ledger/ledger.mjs build && open ~/agent-hub/state/ledger/dashbo
 
 Claude、Codex、DeepSeek 负责写代码，shona 负责把三家组成一个团队。
 
+> **作者有话说**：惭愧惭愧，这也是改装自别人的 skill——底子是 `codex-deepseek-leader`（Codex 领导 DeepSeek），调度脚本约 65% 原样沿用；改的是"谁当组长、怎么分工、怎么审"这套规矩，外加 Jev 分诊、配置化和账本。
+
 > Built by [@shona-duan](https://github.com/shona-duan). The idea, the rules, and the hard-won
 > judgment calls are all shona's; the models just did the typing.
 
