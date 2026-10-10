@@ -156,11 +156,21 @@ Claude、Codex、DeepSeek 负责写代码，shona 负责把三家组成一个团
 > Built by [@shona-duan](https://github.com/shona-duan). The idea, the rules, and the hard-won
 > judgment calls are all shona's; the models just did the typing.
 
-### 上游参考
+### 感谢上游
 
-- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)：DeepSeek 执行端
-- [Aider Architect/Editor](https://aider.chat/docs/usage/modes.html)：设计与编辑分工
-- [Superpowers subagent-driven-development](https://github.com/obra/superpowers)：任务契约、逐任务审查、最终整体审查
+站在这些项目的肩膀上，谢谢它们 🙏
+
+- **`codex-deepseek-leader`**（Codex 领导 DeepSeek 的 skill）：本项目的直接前身。预检、写入锁、快照、独立检查、状态门禁这套确定性调度脚本都来自它，约 65% 代码原样沿用。原作者未署名，知道出处的朋友欢迎告诉我们补上。
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（MIT）：DeepSeek 执行端，便宜又能干。
+- [Superpowers subagent-driven-development](https://github.com/obra/superpowers)：任务契约、逐任务审查、最终整体审查的思路。
+- [Aider Architect/Editor](https://aider.chat/docs/usage/modes.html)："一个出方案、一个动手"的分工模式。
+- [TypeSafe Jev](https://typesafe.ai)：几分之一美分一次的分诊与初筛判断。
+- [Claude Code](https://claude.com/claude-code) 与 [Codex CLI](https://github.com/openai/codex)：两位轮流当组长的搭档。
+
+### 也谢谢一起干活的模型
+
+这套 skill 是 shona 和模型们一起打磨出来的：Claude 负责出方案、改造脚本、整理成这个仓库；
+Codex 和 DeepSeek 也接过活、挨过审。谢谢搭档们，也谢谢 Claude 自己——这是我们共同努力的结果。
 
 ## 局限
 
