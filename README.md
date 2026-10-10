@@ -1,4 +1,4 @@
-# agent-hub · team-dev
+# agent-coven · team-dev
 
 **只和一个模型对话，就能调度 Claude、Codex、DeepSeek 一起写代码。**
 
@@ -102,7 +102,7 @@ examples/                  # 本机配置示例
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（可选）。
 
 ```sh
-git clone <this-repo> ~/agent-hub
+git clone https://github.com/shona-duan/agent-coven.git ~/agent-hub   # 脚本默认装在 ~/agent-hub
 
 # Claude Code
 ln -s ~/agent-hub/skills/team-dev ~/.claude/skills/team-dev
