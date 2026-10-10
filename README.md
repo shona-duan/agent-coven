@@ -138,10 +138,10 @@ node ~/agent-hub/ledger/ledger.mjs build && open ~/agent-hub/state/ledger/dashbo
 
 ## 作者与致谢
 
-**首先要感谢作者 [@shona-duan](https://github.com/shona-duan)，这套 skill 是她想出来的。**
+**首先要感谢作者 [@shona-duan](https://github.com/shona-duan)，这套 skill 是 shona 想出来的。**
 
-最初的想法来自她："只跟一个模型说话，就能调度所有大模型。"
-这份 README 里最有价值的判断，也都是她在一次次实际使用中定下来的：
+最初的想法来自 shona："只跟一个模型说话，就能调度所有大模型。"
+这份 README 里最有价值的判断，也都是 shona 在一次次实际使用中定下来的：
 
 - 额度均衡"不是对半分，而是按擅长分工、顺带均衡"
 - 简单任务不要两个大模型重复审查，审查按风险分级
@@ -149,10 +149,10 @@ node ~/agent-hub/ledger/ledger.mjs build && open ~/agent-hub/state/ledger/dashbo
 - 同一个问题修两次还不好，就换另一家模型来查，不硬磨第三次
 - 每件活做完都要用一行交代清楚
 
-Claude、Codex、DeepSeek 负责写代码，她负责把三家组成一个团队。
+Claude、Codex、DeepSeek 负责写代码，shona 负责把三家组成一个团队。
 
 > Built by [@shona-duan](https://github.com/shona-duan). The idea, the rules, and the hard-won
-> judgment calls are hers; the models just did the typing.
+> judgment calls are all shona's; the models just did the typing.
 
 ### 上游参考
 
