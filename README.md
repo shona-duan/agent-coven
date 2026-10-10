@@ -160,7 +160,7 @@ Claude、Codex、DeepSeek 负责写代码，shona 负责把三家组成一个团
 
 站在这些项目的肩膀上，谢谢它们 🙏
 
-- **`codex-deepseek-leader`**（Codex 领导 DeepSeek 的 skill）：本项目的直接前身。预检、写入锁、快照、独立检查、状态门禁这套确定性调度脚本都来自它，约 65% 代码原样沿用。原作者未署名，知道出处的朋友欢迎告诉我们补上。
+- **`codex-deepseek-leader`**（Codex 领导 DeepSeek 的 skill）：本项目的直接前身。预检、写入锁、快照、独立检查、状态门禁这套确定性调度脚本都来自它，约 65% 代码原样沿用。它并非本仓库作者原创。
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（MIT）：DeepSeek 执行端，便宜又能干。
 - [Superpowers subagent-driven-development](https://github.com/obra/superpowers)：任务契约、逐任务审查、最终整体审查的思路。
 - [Aider Architect/Editor](https://aider.chat/docs/usage/modes.html)："一个出方案、一个动手"的分工模式。
