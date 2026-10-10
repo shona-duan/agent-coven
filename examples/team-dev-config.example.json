@@ -1,0 +1,6 @@
+{
+  "dsh_bin": "/ABSOLUTE/PATH/node_modules/@deepseek-ai/dsh/lib/bin.js",
+  "dsh_home": "/ABSOLUTE/PATH/.dsh",
+  "credential_file": "/ABSOLUTE/PATH/credentials.json",
+  "web_mode": "off"
+}

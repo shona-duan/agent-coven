@@ -1,0 +1,16 @@
+{
+  "reviewer": "claude",
+  "run_id": "COPY_RUN_ID_FROM_COLLECT",
+  "artifact_digest": "COPY_CURRENT_ARTIFACT_DIGEST_FROM_COLLECT",
+  "decision": "accept",
+  "summary": "填写本次实际审查结论与关键依据。reviewer 必须是任务的 leader。",
+  "spec": "pass",
+  "quality": "pass",
+  "blocking_findings": [],
+  "acceptance": [
+    {"id": "A1", "status": "pass", "evidence": "填写实际文件/行号与检查日志路径；不能只写已完成。"},
+    {"id": "A2", "status": "pass", "evidence": "说明如何对照 before 快照确认现有接口和用户改动得到保留。"}
+  ],
+  "_takeover_by": "decision=takeover 时可填 claude|codex，缺省为 leader；不用时删除本行",
+  "_cross_review": {"reviewer": "仅 risk=high 且需要时填写：与 leader 不同的 claude|codex", "decision": "pass", "summary": "另一家的审查结论；不用时删除本字段"}
+}

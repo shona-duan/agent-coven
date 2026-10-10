@@ -1,0 +1,19 @@
+{
+  "id": "implement-greeting",
+  "leader": "claude",
+  "risk": "low",
+  "workspace": "/ABSOLUTE/USER/SPECIFIED/WORKSPACE",
+  "brief": "在 src/greet.mjs 实现 greet(name)，返回 Hello, <去除首尾空白的名字>!；空白名称使用 world。保留现有导出与用户改动。",
+  "context_files": ["src/greet.mjs", "AGENTS.md"],
+  "constraints": ["只修改授权范围，遵守适用的项目规则；不安装依赖、不提交或推送。"],
+  "depends_on": [],
+  "write_scope": ["src/greet.mjs"],
+  "timeout_seconds": 1800,
+  "acceptance": [
+    {"id": "A1", "description": "非空名字正确去除首尾空白，空白名字返回 Hello, world!", "required": true},
+    {"id": "A2", "description": "现有导出接口及用户已有改动得到保留", "required": true}
+  ],
+  "checks": [
+    {"id": "syntax", "kind": "syntax", "argv": ["node", "--check", "src/greet.mjs"], "cwd": ".", "timeout_seconds": 120}
+  ]
+}

@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>协作账本</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #f4f3f0; --surface-1: #fcfcfb; --border: #e3e2dd; --grid: #ecebe7;
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #7a7974;
+  --claude: #2a78d6; --codex: #eb6834; --deepseek: #1baf7a; --jev: #eda100;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface-0: #121211; --surface-1: #1a1a19; --border: #2e2e2b; --grid: #262624;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --claude: #3987e5; --codex: #d95926; --deepseek: #199e70; --jev: #c98500;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #121211; --surface-1: #1a1a19; --border: #2e2e2b; --grid: #262624;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+  --claude: #3987e5; --codex: #d95926; --deepseek: #199e70; --jev: #c98500;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-0); color: var(--text-primary); font: 14px/1.5 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
+main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 0 0 12px; }
+.sub { color: var(--text-secondary); font-size: 13px; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-top: 16px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; }
+.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.tile .name { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 13px; }
+.dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.tile .big { font-size: 26px; font-weight: 600; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+.tile .meta { color: var(--text-muted); font-size: 12px; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.chart { position: relative; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { fill: var(--text-muted); font-size: 11px; }
+.tip { position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgb(0 0 0 / .12); display: none; white-space: nowrap; z-index: 2; }
+.tip b { color: var(--text-primary); }
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--text-secondary); font-weight: 500; font-size: 12px; }
+td.num, th.num { text-align: right; }
+td.title { white-space: normal; min-width: 200px; color: var(--text-secondary); }
+.tag { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 11px; border: 1px solid var(--border); color: var(--text-secondary); }
+.who { display: inline-flex; align-items: center; gap: 6px; }
+details summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; margin-top: 10px; }
+.share { display: flex; height: 8px; border-radius: 4px; overflow: hidden; gap: 2px; min-width: 120px; background: var(--surface-1); }
+.empty { color: var(--text-muted); font-size: 13px; padding: 8px 0; }
+.note { color: var(--text-muted); font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>协作账本</h1>
+  <div class="sub" id="sub"></div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <section class="card">
+    <h2>任务对照：自己做 vs 派出去</h2>
+    <div class="scroll"><table id="tasks"></table></div>
+    <div class="note">按任务起止时间窗口归账：窗口内三方的所有调用都算进该任务。金额为按 API 标价折算的“等价美元”，用于横向比较，不是订阅的实际扣费。</div>
+  </section>
+
+  <section class="card">
+    <h2>每日消耗（API 等价美元）</h2>
+    <div class="legend" id="legend-daily"></div>
+    <div class="chart" id="daily"></div>
+    <details><summary>查看数据表</summary><div class="scroll"><table id="daily-table"></table></div></details>
+  </section>
+
+  <section class="card">
+    <h2>Codex 订阅额度已用（%）</h2>
+    <div class="legend" id="legend-quota"></div>
+    <div class="chart" id="quota"></div>
+    <div class="note">来自 Codex 会话里的 rate_limits 快照；Claude 的订阅额度本地日志里没有，只能看 token 与等价金额。</div>
+  </section>
+
+  <section class="card">
+    <h2>最近会话</h2>
+    <div class="scroll"><table id="sessions"></table></div>
+  </section>
+</main>
+<script>
+const DATA = /*__DATA__*/null;
+const WHO = [
+  { key: 'claude', name: 'Claude' },
+  { key: 'codex', name: 'Codex' },
+  { key: 'deepseek', name: 'DeepSeek' },
+  { key: 'jev', name: 'Jev' },
+];
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const usd = v => v >= 1 ? '$' + v.toFixed(2) : v >= 0.01 ? '$' + v.toFixed(3) : v > 0 ? '$' + v.toFixed(4) : '$0';
+const tok = v => v >= 1e6 ? (v / 1e6).toFixed(2) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'k' : String(v);
+const time = ts => new Date(ts).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const dot = k => `<span class="dot" style="background:var(--${k})"></span>`;
+const legend = (el, items) => { el.innerHTML = items.map(i => `<span>${dot(i.key)}${i.name}</span>`).join(''); };
+
+$('sub').textContent = `最近 ${DATA.days} 天 · 生成于 ${new Date(DATA.generated_at).toLocaleString('zh-CN')} · 价格：Claude ${DATA.prices.claude.model} / Codex ${DATA.prices.codex.model} / DeepSeek ${DATA.prices.deepseek.model}`;
+
+// 总览
+$('tiles').innerHTML = WHO.map(w => {
+  const t = DATA.totals[w.key];
+  return `<div class="tile"><div class="name">${dot(w.key)}${w.name}</div>
+    <div class="big">${usd(t.usd)}</div>
+    <div class="meta">${tok(t.total)} token · 输出 ${tok(t.output)} · ${t.calls} 次调用</div></div>`;
+}).join('');
+
+// 任务对照
+(() => {
+  const rows = [...DATA.tasks].sort((a, b) => b.start - a.start);
+  if (!rows.length) { $('tasks').outerHTML = '<div class="empty">还没有记录任务。用 <code>node ledger.mjs task start &lt;id&gt; --mode self|delegated</code> 开始记账。</div>'; return; }
+  const head = `<tr><th>任务</th><th>方式</th><th>时间</th>${WHO.map(w => `<th class="num">${w.name}</th>`).join('')}<th class="num">合计</th><th class="num" title="开工前预估：自己做要几轮 / 实际 Claude 调用次数">预估/实际轮</th><th>Claude 占比</th><th class="num">Codex 额度</th></tr>`;
+  const body = rows.map(t => {
+    const total = t.all.usd || 1e-12;
+    const share = WHO.map(w => `<span title="${w.name} ${usd(t.by[w.key].usd)}" style="flex:${t.by[w.key].usd / total};background:var(--${w.key})"></span>`).join('');
+    const q = t.codex_quota?.primary != null ? `+${t.codex_quota.primary}%` : '—';
+    return `<tr>
+      <td class="title"><b>${esc(t.title)}</b>${t.open ? ' <span class="tag">进行中</span>' : ''}${t.note ? `<br>${esc(t.note)}` : ''}</td>
+      <td><span class="tag">${t.mode === 'self' ? '自己做' : '派出去'}</span></td>
+      <td>${time(t.start)}</td>
+      ${WHO.map(w => `<td class="num" title="${tok(t.by[w.key].total)} token，输出 ${tok(t.by[w.key].output)}">${usd(t.by[w.key].usd)}<br><span class="sub">${tok(t.by[w.key].output)} 出</span></td>`).join('')}
+      <td class="num"><b>${usd(t.all.usd)}</b></td>
+      <td class="num">${t.estimate ?? '—'} / ${t.by.claude.calls}</td>
+      <td class="num">${t.estimate ?? '—'} / ${t.by.claude.calls}</td>
+      <td><div class="share">${share}</div><span class="sub">${Math.round(t.by.claude.usd / total * 100)}%</span></td>
+      <td class="num">${q}</td></tr>`;
+  }).join('');
+  $('tasks').innerHTML = head + body;
+})();
+
+// 通用：带悬停提示的图表容器
+function tipFor(container) {
+  const tip = document.createElement('div'); tip.className = 'tip'; container.appendChild(tip);
+  return {
+    show(html, x, y) { tip.innerHTML = html; tip.style.display = 'block'; const w = container.clientWidth; const r = tip.getBoundingClientRect(); tip.style.left = Math.min(Math.max(x - r.width / 2, 0), w - r.width) + 'px'; tip.style.top = (y - r.height - 10) + 'px'; },
+    hide() { tip.style.display = 'none'; },
+  };
+}
+const svgEl = (tag, attrs) => { const e = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+function niceMax(v) { if (v <= 0) return 1; const p = 10 ** Math.floor(Math.log10(v)); return [1, 2, 2.5, 5, 10].map(m => m * p).find(m => m >= v); }
+
+// 每日堆叠柱
+(() => {
+  legend($('legend-daily'), WHO);
+  const days = Object.keys(DATA.daily).sort();
+  const host = $('daily');
+  if (!days.length) { host.innerHTML = '<div class="empty">暂无数据</div>'; return; }
+  const W = 1000, H = 260, L = 48, R = 8, T = 10, B = 26;
+  const max = niceMax(Math.max(...days.map(d => WHO.reduce((s, w) => s + DATA.daily[d][w.key], 0))));
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': '每日三方消耗堆叠柱状图' });
+  for (let i = 0; i <= 4; i++) {
+    const y = T + (H - T - B) * (1 - i / 4);
+    svg.append(svgEl('line', { x1: L, x2: W - R, y1: y, y2: y, stroke: 'var(--grid)' }));
+    const t = svgEl('text', { x: L - 6, y: y + 4, 'text-anchor': 'end' }); t.textContent = usd(max * i / 4); svg.append(t);
+  }
+  const band = (W - L - R) / days.length, bw = Math.min(36, band * 0.6);
+  const tip = tipFor(host);
+  days.forEach((d, i) => {
+    const x = L + band * i + (band - bw) / 2;
+    let y = H - B;
+    const segs = WHO.filter(w => DATA.daily[d][w.key] > 0);
+    segs.forEach((w, j) => {
+      const h = (H - T - B) * DATA.daily[d][w.key] / max;
+      const top = j === segs.length - 1;
+      const gap = j > 0 ? 2 : 0;
+      const hh = Math.max(h - gap, 0.5);
+      y -= h;
+      const path = top
+        ? `M${x},${y + hh + 0} V${y + 4} Q${x},${y} ${x + 4},${y} H${x + bw - 4} Q${x + bw},${y} ${x + bw},${y + 4} V${y + hh} Z`
+        : `M${x},${y} H${x + bw} V${y + hh} H${x} Z`;
+      svg.append(svgEl('path', { d: path, fill: `var(--${w.key})` }));
+    });
+    const lab = svgEl('text', { x: x + bw / 2, y: H - 8, 'text-anchor': 'middle' }); lab.textContent = d.slice(5); svg.append(lab);
+    const hit = svgEl('rect', { x: L + band * i, y: T, width: band, height: H - T - B, fill: 'transparent' });
+    hit.addEventListener('mousemove', () => {
+      const r = host.getBoundingClientRect(), sx = r.width / W;
+      tip.show(`<b>${d}</b><br>${WHO.map(w => `${dot(w.key).replace('class="dot"', 'class="dot" style="display:inline-block;margin-right:4px;background:var(--' + w.key + ')"')}${w.name} ${usd(DATA.daily[d][w.key])} · ${tok(DATA.daily[d][w.key + '_tok'])}`).join('<br>')}`, (x + bw / 2) * sx, T * sx + 20);
+    });
+    hit.addEventListener('mouseleave', () => tip.hide());
+    svg.append(hit);
+  });
+  host.prepend(svg);
+  $('daily-table').innerHTML = `<tr><th>日期</th>${WHO.map(w => `<th class="num">${w.name} $</th><th class="num">${w.name} token</th>`).join('')}</tr>` +
+    days.map(d => `<tr><td>${d}</td>${WHO.map(w => `<td class="num">${usd(DATA.daily[d][w.key])}</td><td class="num">${tok(DATA.daily[d][w.key + '_tok'])}</td>`).join('')}</tr>`).join('');
+})();
+
+// Codex 额度折线（两条线同单位 %，单轴）
+(() => {
+  const series = [{ key: 'claude', field: 'primary', name: '5 小时窗口' }, { key: 'codex', field: 'secondary', name: '周窗口' }];
+  legend($('legend-quota'), series);
+  const pts = DATA.codex_limits;
+  const host = $('quota');
+  if (pts.length < 2) { host.innerHTML = '<div class="empty">暂无额度快照</div>'; return; }
+  const W = 1000, H = 220, L = 40, R = 44, T = 10, B = 26;
+  const t0 = pts[0].ts, t1 = pts.at(-1).ts;
+  const X = ts => L + (W - L - R) * (ts - t0) / Math.max(t1 - t0, 1);
+  const Y = v => T + (H - T - B) * (1 - v / 100);
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Codex 订阅额度已用百分比' });
+  for (const v of [0, 25, 50, 75, 100]) {
+    svg.append(svgEl('line', { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: 'var(--grid)' }));
+    const t = svgEl('text', { x: L - 6, y: Y(v) + 4, 'text-anchor': 'end' }); t.textContent = v + '%'; svg.append(t);
+  }
+  for (const ts of [t0, (t0 + t1) / 2, t1]) { const t = svgEl('text', { x: X(ts), y: H - 8, 'text-anchor': 'middle' }); t.textContent = time(ts); svg.append(t); }
+  const ends = [];
+  for (const s of series) {
+    const p = pts.filter(q => q[s.field] != null);
+    if (!p.length) continue;
+    let seg = [];
+    const flush = () => { if (seg.length) svg.append(svgEl('polyline', { points: seg.join(' '), fill: 'none', stroke: `var(--${s.key})`, 'stroke-width': 2, 'stroke-linejoin': 'round' })); seg = []; };
+    p.forEach((q, i) => { if (i && q.ts - p[i - 1].ts > 36e5) flush(); seg.push(`${X(q.ts)},${Y(q[s.field])}`); });
+    flush();
+    const last = p.at(-1);
+    svg.append(svgEl('circle', { cx: X(last.ts), cy: Y(last[s.field]), r: 4, fill: `var(--${s.key})`, stroke: 'var(--surface-1)', 'stroke-width': 2 }));
+    ends.push({ y: Y(last[s.field]), x: X(last.ts) + 8, text: `${last[s.field]}%`, key: s.key });
+  }
+  ends.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 13) ends[i].y = ends[i - 1].y + 13;
+  for (const e of ends) { const lab = svgEl('text', { x: e.x, y: e.y + 4 }); lab.textContent = e.text; lab.style.fill = 'var(--text-secondary)'; svg.append(lab); }
+  const cross = svgEl('line', { y1: T, y2: H - B, stroke: 'var(--text-muted)', 'stroke-dasharray': '3 3', visibility: 'hidden' });
+  svg.append(cross);
+  const tip = tipFor(host);
+  const hit = svgEl('rect', { x: L, y: T, width: W - L - R, height: H - T - B, fill: 'transparent' });
+  hit.addEventListener('mousemove', ev => {
+    const r = host.getBoundingClientRect(), sx = r.width / W, mx = (ev.clientX - r.left) / sx;
+    const q = pts.reduce((a, b) => Math.abs(X(b.ts) - mx) < Math.abs(X(a.ts) - mx) ? b : a);
+    cross.setAttribute('x1', X(q.ts)); cross.setAttribute('x2', X(q.ts)); cross.setAttribute('visibility', 'visible');
+    tip.show(`<b>${time(q.ts)}</b><br>5 小时窗口 ${q.primary}%<br>周窗口 ${q.secondary ?? '—'}%`, X(q.ts) * sx, 40);
+  });
+  hit.addEventListener('mouseleave', () => { tip.hide(); cross.setAttribute('visibility', 'hidden'); });
+  svg.append(hit);
+  host.prepend(svg);
+})();
+
+// 最近会话
+(() => {
+  const rows = DATA.sessions.slice(0, 60);
+  const totals = {};
+  for (const s of rows) totals[s.who + s.id] = 0;
+  $('sessions').innerHTML = `<tr><th>谁</th><th>开始</th><th>时长</th><th>来源</th><th>内容</th><th>目录</th></tr>` + rows.map(s => `<tr>
+    <td><span class="who">${dot(s.who)}${(WHO.find(w => w.key === s.who) || { name: s.who }).name}</span></td>
+    <td>${time(s.start)}</td><td>${Math.max(1, Math.round((s.end - s.start) / 60000))} 分钟</td>
+    <td><span class="tag">${esc(s.who === 'codex' ? (s.source === 'exec' ? 'Claude 派发' : s.source || '') : s.who === 'deepseek' ? '派发' : '对话')}</span></td>
+    <td class="title">${esc(s.title)}</td><td class="sub">${esc((s.cwd || '').replace(/^\/Users\/[^/]+/, '~'))}</td></tr>`).join('');
+})();
+</script>
+</body>
+</html>

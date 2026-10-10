@@ -1,0 +1,5 @@
+runs/
+scratch/
+state/
+__pycache__/
+.DS_Store

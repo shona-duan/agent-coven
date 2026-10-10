@@ -1,0 +1,6 @@
+interface:
+  display_name: "三方协作开发 · Claude/Codex/DeepSeek"
+  short_description: "仅明确请求时启用：组长设计验收，按擅长派给 DeepSeek/Codex/Claude，按风险分级审查"
+  default_prompt: "使用 $team-dev，你当组长，在我指定的工作区按擅长派活给 DeepSeek/Codex/Claude，按风险分级审查和验收。"
+policy:
+  allow_implicit_invocation: false
