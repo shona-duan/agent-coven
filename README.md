@@ -14,14 +14,43 @@
 
 ## 核心理念
 
+**一个大脑，几双手。** 组长负责聊需求、拍板方案、验收；方案定了就把实现交出去，执行者只拿结论去做。
+过程很长、只要结论的活（截图验证、长日志、跑测试修到绿、跨仓库翻文件）都派出去，让组长的对话保持短小。
+
 | 原则 | 做法 |
 |---|---|
-| **按擅长分工，额度均衡只是附带** | Claude、Codex 都是订阅制、额度有限：两家都合适时给最近用得少的一家，某家快到限额就转另一家。不追求对半。 |
-| **便宜的先上** | 中文文案/文档/注释、批量机械修改、样板代码、范围明确的简单 bug、补测试 → 先给 DeepSeek（按量计费，每件通常 < $0.01）。 |
-| **Claude 出方案，Codex 执行** | 需求模糊时 Claude 写设计进任务包，Codex 在仓库里一口气做完、跑测试修到绿。 |
-| **审查按风险分级，不搞层层审** | low/mid：组长看 diff + 自动检查；只有 high（核心逻辑、安全、数据迁移、大重构）才强制两家大模型参与。 |
-| **按轮数决定派不派，不按行数** | 组长自己做预估要 N 轮调用：N ≤ 2 自己做；N ≥ 4 倾向派；N ≈ 3 看说明好不好写。 |
-| **修两次不行就换脑子** | 同一问题修两次仍失败，把现象和已试方法交给另一家用全新视角排查，不硬磨第三次。 |
+| **方案定了就派** | 组长自己做要 N 轮调用：N ≤ 2 自己做；方案已定、说得清、N ≥ 3 默认派出去；不派要写理由。 |
+| **执行者只拿结论** | 派活说明单列"已定的决策"（结论 + 一句理由，含否掉的方案），不给对话过程。 |
+| **便宜的先上，敏感的不下放** | 中文文档、测试清单、机械改先给 DeepSeek；鉴权、密码、token、支付相关的活代码拦截，只给 Codex / Claude。 |
+| **三道验收关** | 派完自动 Jev 初筛（报警器）→ 组长看 diff → mid 以上再做一次**无上下文审查**（审查者不是实现者、没看过对话）。 |
+| **修两次不行就换脑子** | 同一问题修两次仍失败，交给另一家从头排查，不硬磨第三次。 |
+| **调规则靠测试集** | 改规则、阈值、提示词前后，用 `evals/` 固定测试集整套重跑对比，不临时找例子试。 |
+
+完整规则在 [rules/collaboration.md](rules/collaboration.md)（通用，不写死模型名）；个人偏好（成员、额度、默认组长）
+复制 [profile.example.md](profile.example.md) 填自己的。
+
+### 每条规则靠什么落实（不是黑盒）
+
+| 规则 | 落实方式 |
+|---|---|
+| 敏感活不给 DeepSeek | 代码拦截：派活前扫任务内容，命中即拒绝；误报写明原因才放行并留痕 |
+| DeepSeek 最多 2 次、写入范围锁、高风险阻塞标准、零改动报警 | 代码拦截（team-dev 全流程） |
+| 审查者不能是实现者、审查只读 | 代码拦截（`review_task.py`） |
+| 派活自动记账、派完自动初筛、恢复会话后提醒 team-dev 仍启用 | 脚本 / 钩子自动做 |
+| 执行者不提交、不推送 | 写在派活说明里 |
+| 派不派、要不要审查、一行交代 | 靠组长自觉；账本能事后查到 |
+
+### 理论依据
+
+| 结论 | 出处 | 对应规则 |
+|---|---|---|
+| 多 agent 约耗 15 倍 token；多数编码任务能并行的部分少 | [Anthropic：multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system) | 小活自己做；最多两个执行者同时改代码 |
+| 上下文越长，模型记得越不准 | [Anthropic：context engineering](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) | 组长对话保持短小 |
+| 行动里藏着决策，各干各的会冲突 | [Cognition：Don't Build Multi-Agents](https://cognition.com/blog/dont-build-multi-agents) | 方案没定不派；写"已定的决策" |
+| 只让一个 agent 写，其他只出判断；不看对话的审查者抓出更多严重 bug | [Cognition：Multi-Agents: What's Actually Working](https://cognition.com/blog/multi-agents-working) | 大脑只有一个；无上下文审查 |
+| 护栏分层：模型分类器 + 规则 + 高风险交给人 | OpenAI《A practical guide to building agents》 | Jev + 敏感词拦截 + 对外操作要用户确认 |
+| 评审模型偏爱自己写的东西 | LLM-as-judge 自偏好研究 | 审查者不能是实现者 |
+| 评测先用约 20 个真实样本起步 | Anthropic 同上 | `evals/` 固定测试集 |
 
 ### 为什么小活不该派出去（实测）
 
@@ -32,67 +61,61 @@
 | 写一篇说明文档 | $0.16，2 次调用 | $0.38，5 次调用（含 1 次返工）+ DeepSeek $0.005 |
 | 加一个小命令 | $0.07，1 次调用 | $0.23，3 次调用 + DeepSeek $0.004 |
 
-结论：派活省的是输出，却多出"写说明 → 派发 → 验证 → 审查 → 验收"的往返。
-所以 1–2 轮能做完的活自己做；派活时把「写说明 + 派发」「验证 + 初筛 + 审查 + 验收」各压成一次调用；
-**换任务开新会话**比任何派活策略都省。
+所以 1–2 轮能做完的活自己做；**换任务开新会话**比任何派活策略都省。
 
 ---
 
-## 工作流
+## 两种用法
+
+**日常轻量派活（默认，不用开 team-dev）**
+
+```sh
+python3 ~/agent-hub/codex_task.py 任务.md --cd ~/my-repo --sandbox workspace-write   # 派给 Codex
+python3 ~/agent-hub/review_task.py --run ~/agent-hub/runs/codex-<时间戳>              # mid 以上：无上下文审查
+```
+
+派完自动记账、自动 Jev 初筛（结果在输出的 `jev_screen` 字段）。审查者自动选另一家（Codex 写的交给新开的 Claude 审），只读。
+
+**team-dev 全流程（`/team-dev` 或 `$team-dev` 显式调用，调用一次整个会话有效）**
 
 ```
 用户 ──▶ 组长（Claude / Codex）
-           │ 1. 写任务包 task.json（brief、write_scope、验收标准、检查命令、risk）
-           │ 2. jev.mjs triage   → 建议派给谁、要不要先出方案、风险等级
+           │ 1. 写任务包 task.json（brief、已定的决策、write_scope、验收标准、不算完成清单、检查命令、risk）
            ▼
-         dsh.mjs run --executor deepseek|codex|claude   （取写入范围锁 + 快照）
-           │   deepseek：脚本直接调 DeepSeek Harness
-           │   codex/claude：组长在锁内用 codex_task.py / claude -p 派活，再 collect --finish
+         dsh.mjs run --executor deepseek|codex|claude   （取写入范围锁 + 快照；敏感任务拒绝下放 DeepSeek）
            ▼
          collect --verify    → 独立跑声明的检查（argv 数组，shell=false）
-         jev.mjs screen      → 初筛 diff：越界改动、删除原有行为、安全、半成品
-         collect --review    → 组长逐条对照验收标准填审查；high 风险需另一家 cross_review
+         jev.mjs screen      → 初筛：越界改动、删除原有行为、安全、半成品
+         collect --review    → 组长逐条对照验收标准；high 风险按开工前写定的阻塞标准交叉审
            │
            ├─ pass     → ACCEPTED
            ├─ rework   → 同一 task id 返工（DeepSeek 默认最多 2 次）
-           ├─ takeover → 逐级升级给另一家大模型（实现者与验收者分开）
+           ├─ takeover → 升级给另一家大模型
            └─ block    → 授权/环境/需求不足，说明原因
 ```
 
-### 硬规则（代码强制）
-
-- **敏感任务绝不下放 DeepSeek**：risk=high，或任务中出现鉴权、登录、密码、token、密钥、加密、签名、权限、支付、计费等词（中英），
-  `run --executor deepseek` 直接报 `SENSITIVE_NOT_DELEGATABLE`。误报可写 `sensitive_override: "原因"` 放行并留痕。
-- **外部副作用不外派**：提交、推送、发消息、部署、改全局配置由组长在用户确认后亲自做。
-- **并发与范围**：同时最多两个 writer，写入范围不能重叠；冲突就排队，不改 id 绕锁。
-- **退出码 0 ≠ 通过**：执行结束只会进入 `REVIEW` 或 `BLOCKED`，必须经组长审查才 `ACCEPTED`；执行者自评不算审查。
-- **只在明确要求时启用**：`/team-dev`（Claude Code）或 `$team-dev`（Codex）。普通开发请求不会触发。
-
 ### Jev 判断员
 
-[TypeSafe Jev](https://typesafe.ai) 只给概率化判断、不写代码，单次通常不到 0.05 美分。
-"派给谁 / 要不要升级风险"的规则写在 `scripts/jev.mjs` 代码里，调阈值不必重问模型。
-分诊和初筛只是建议：组长可以推翻，但要在审查里写一句原因，方便以后调规则。
+[TypeSafe Jev](https://typesafe.ai) 只对一份 diff 回答固定的是非题（没做完？混进无关改动？碰了鉴权？），单次通常不到 0.05 美分。
+它是**报警器，不是审阅者**：不判断代码对不对。真实提交上实测（43 例）："没做完"6/6 抓到、0/25 误报；
+"混进无关改动"6/6 抓到、2/25 误报；"删了原有功能"最弱。同一数据连跑会有噪声，单项差一两条不算数。
 
 ---
 
 ## 仓库结构
 
 ```
-skills/team-dev/
-  SKILL.md                 # 组长读的流程说明（Claude Code / Codex 共用）
-  agents/openai.yaml       # Codex 侧的 skill 元数据
-  assets/task.json         # 任务包模板
-  assets/review.json       # 审查模板
-  references/operations.md # 命令、字段、状态机契约
-  references/design.md     # 设计依据与上游参考
-  scripts/dsh.mjs          # doctor / run / status / stop / collect / web
-  scripts/jev.mjs          # triage / screen
-  scripts/verify*.mjs      # 离线回归（假 Harness）
-codex_task.py              # 把一个有界任务派给 `codex exec`，日志落 runs/
-ledger/                    # 四方 token 账本 → dashboard.html（自己做 vs 派出去哪个划算）
-memory/global.example.md   # Claude 与 Codex 共用的"共享记忆"模板
-examples/                  # 本机配置示例
+rules/collaboration.md     # 通用协作规则（谁派、派给谁、怎么验）
+profile.example.md         # 个人偏好模板（成员、额度、默认组长）
+memory/global.example.md   # Claude 与 Codex 共用的"共享记忆"模板，引用上面两份
+codex_task.py              # 派给 `codex exec`，自动记账 + 自动初筛
+review_task.py             # 无上下文审查（审查者≠实现者、只读）
+jev_screen.py              # 派完自动 Jev 初筛
+evals/                     # 固定测试集运行器（数据自己攒，见 evals/README.md）
+hooks/skill-resume.mjs     # Claude Code 钩子：恢复/压缩会话后提醒 team-dev 仍启用
+skills/team-dev/           # 全流程 skill：SKILL.md、任务/审查模板、dsh.mjs、jev.mjs、离线回归
+ledger/                    # 四方 token 账本 → dashboard.html
+config.example.json        # 本机配置模板（codex/node 路径、代理等）
 ```
 
 ## 安装
@@ -104,37 +127,40 @@ examples/                  # 本机配置示例
 ```sh
 git clone https://github.com/shona-duan/agent-coven.git ~/agent-hub   # 脚本默认装在 ~/agent-hub
 
-# Claude Code
-ln -s ~/agent-hub/skills/team-dev ~/.claude/skills/team-dev
-# Codex
-ln -s ~/agent-hub/skills/team-dev ~/.codex/skills/team-dev
+# skill
+ln -s ~/agent-hub/skills/team-dev ~/.claude/skills/team-dev   # Claude Code
+ln -s ~/agent-hub/skills/team-dev ~/.codex/skills/team-dev    # Codex
 
-# 本机配置（DeepSeek Harness 入口与凭据文件路径；凭据内容不进配置）
+# 本机配置（都可省略：默认从 PATH 找命令、不走代理）
+cp ~/agent-hub/config.example.json ~/agent-hub/config.json
 mkdir -p ~/agent-hub/state/team-dev
-cp ~/agent-hub/examples/team-dev-config.example.json ~/agent-hub/state/team-dev/config.json
+cp ~/agent-hub/examples/team-dev-config.example.json ~/agent-hub/state/team-dev/config.json   # DeepSeek Harness 入口
 
-# 可选：Jev 分诊/初筛
+# 规则与偏好：复制模板改成自己的
+mkdir -p ~/agent-hub/memory
+cp ~/agent-hub/memory/global.example.md ~/agent-hub/memory/global.md
+cp ~/agent-hub/profile.example.md ~/agent-hub/memory/profile.md
+echo '@~/agent-hub/memory/global.md' >> ~/.claude/CLAUDE.md
+ln -s ~/agent-hub/memory/global.md ~/.codex/AGENTS.md
+
+# 可选：Jev 初筛
 export TYPESAFE_API_KEY=...
 
 # 自检
 node ~/agent-hub/skills/team-dev/scripts/dsh.mjs doctor --workspace /path/to/your/repo
 ```
 
-想让两家共享同一套规则：把 `memory/global.example.md` 复制成 `memory/global.md` 按需修改，
-然后在 `~/.claude/CLAUDE.md` 写 `@~/agent-hub/memory/global.md`，并把 `~/.codex/AGENTS.md` 软链到它。
-
-然后在对话里说：`/team-dev 在 ~/my-repo 里实现 xxx`。
+可选的 Claude Code 钩子（恢复会话后提醒 team-dev 仍启用）：在 `~/.claude/settings.json` 的 `hooks.SessionStart`
+加一项 `matcher: "resume|compact"`，命令为 `node ~/agent-hub/hooks/skill-resume.mjs`。
 
 ## 账本
 
 ```sh
-node ~/agent-hub/ledger/ledger.mjs task start fix-login --mode delegated --estimate 4 --title "修登录跳转"
-node ~/agent-hub/ledger/ledger.mjs task end fix-login --note "DeepSeek 一次过"
 node ~/agent-hub/ledger/ledger.mjs build && open ~/agent-hub/state/ledger/dashboard.html
 ```
 
-读本地 Claude / Codex / DeepSeek 日志，按任务时间窗口归账，按 `ledger/prices.json` 折成等价美元，
-记录预估轮数与实际轮数，用来校准"什么时候值得派"。详见 [ledger/README.md](ledger/README.md)。
+自动按会话汇总 Claude / Codex / DeepSeek 的调用数、折算金额和涉及仓库，长会话标红；派活脚本自动记账。
+小活不记；预估 ≥4 轮仍自己做才用 `ledger.mjs task note` 记一条。详见 [ledger/README.md](ledger/README.md)。
 
 ## 作者与致谢
 
@@ -144,7 +170,9 @@ node ~/agent-hub/ledger/ledger.mjs build && open ~/agent-hub/state/ledger/dashbo
 这份 README 里最有价值的判断，也都是 shona 在一次次实际使用中定下来的：
 
 - 额度均衡"不是对半分，而是按擅长分工、顺带均衡"
-- 简单任务不要两个大模型重复审查，审查按风险分级
+- 审查按风险分级，不搞层层审
+- 大脑一个就够了，多了反而更乱：组长拍板，执行者只拿结论
+- 组长的对话要保持短小，过程长的活派出去
 - 派不派活按轮数算，不按代码行数算
 - 同一个问题修两次还不好，就换另一家模型来查，不硬磨第三次
 - 每件活做完都要用一行交代清楚

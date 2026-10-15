@@ -56,6 +56,12 @@ export function parse(argv) {
   return { command, options };
 }
 const print = value => process.stdout.write(JSON.stringify(value, null, 2) + '\n');
+// 派活自动记账（agent-hub 账本存在时才记；失败不影响派活）。执行者=组长时算自己做。
+const LEDGER = process.env.AGENT_HUB_LEDGER || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../ledger/ledger.mjs');
+function ledger(...args) {
+  if (!fs.existsSync(LEDGER)) return;
+  try { spawnSync(process.execPath, [LEDGER, 'task', ...args], { stdio: 'ignore', timeout: 30000 }); } catch {}
+}
 const short = r => ({ run_id: r.id, task_id: r.task.id, workspace: r.task.workspace, status: r.status, executor: r.executor, leader: r.task.leader, risk: r.task.risk, ...taskSensitivity(r.task), sensitive_override: r.sensitive_override || null, deepseek_max_attempts: r.deepseek_max_attempts ?? 2, attempt: r.attempt, next_executor: r.next_executor || null, error: r.error || null });
 
 async function updateWeb(store, run) {
@@ -81,7 +87,7 @@ async function collectFiles(store, run) {
   const diff = spawnSync('git', ['diff', '--no-index', '--no-ext-diff', '--binary', '--', path.join(dir, 'before'), snapshotDir], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
   if (![0, 1].includes(diff.status)) fail('DIFF_FAILED', '不能生成审查 diff；请缩小任务范围后重试');
   textFile(path.join(dir, 'changes.patch'), redact(diff.stdout));
-  const evidence = { run_id: run.id, previous_run: run.previous_run || null, task_start_run: run.task_start_run || run.id, collected_at: now(), artifact_digest: snap.digest, baseline_digest: run.baseline.digest, changes, diff_file: path.join(dir, 'changes.patch'), snapshot_directory: snapshotDir };
+  const evidence = { run_id: run.id, previous_run: run.previous_run || null, task_start_run: run.task_start_run || run.id, collected_at: now(), artifact_digest: snap.digest, baseline_digest: run.baseline.digest, changes, no_changes: changes.length === 0, diff_file: path.join(dir, 'changes.patch'), snapshot_directory: snapshotDir };
   atomic(path.join(dir, 'collection.json'), evidence);
   return evidence;
 }
@@ -122,7 +128,7 @@ async function runTask(options, store) {
     web = { enabled: true, config, workspace_id: registered.workspaceId, web_url: config.origin };
   }
   const key = taskKey(task), id = uid('run'), dir = store.runDir(id);
-  let previous, run;
+  let previous, run, recorded = false;
   const control = new AbortController();
   const onSignal = () => control.abort();
   process.on('SIGTERM', onSignal); process.on('SIGINT', onSignal);
@@ -159,6 +165,7 @@ async function runTask(options, store) {
       data.tasks[key] = { id: task.id, workspace: task.workspace, latest_run: id, task_start_run: run.task_start_run, status: 'RUNNING', scopes: lease.scopes, reserved: true, attempts: run.attempt, deepseek_attempts: count + (executor === 'deepseek' ? 1 : 0), contract_hash: hash(JSON.stringify(task)) };
     });
     print({ ...short(run), state_directory: dir, web });
+    recorded = true; ledger('start', id, '--mode', executor === task.leader ? 'self' : 'delegated', '--title', `${displayName(executor)}：${task.id}（第 ${run.attempt} 次）`);
     if (executor !== 'deepseek') {
       const deadline = Date.now() + task.timeout_seconds * 1000;
       while (store.getRun(id).status === 'RUNNING' && !control.signal.aborted && Date.now() < deadline) await sleep(250);
@@ -214,7 +221,10 @@ async function runTask(options, store) {
       if (stopped) await updateWeb(store, run);
     }
     throw e;
-  } finally { process.removeListener('SIGTERM', onSignal); process.removeListener('SIGINT', onSignal); }
+  } finally {
+    process.removeListener('SIGTERM', onSignal); process.removeListener('SIGINT', onSignal);
+    if (recorded) { let st = run.status; try { st = store.getRun(id).status; } catch {} ledger('end', id, '--force', '--note', `status=${st}`); }
+  }
 }
 
 async function stopRun(options, store) {
@@ -300,6 +310,8 @@ function validateReview(review, run, evidence, checks, data) {
     }
     if (run.status !== 'REVIEW' || run.result?.exit_code !== 0 || run.result?.stop_reason || run.result?.error || run.error || !run.result?.stdout?.trim()) fail('EXECUTION_NOT_REVIEWABLE', '仅允许验收成功执行且处于 REVIEW 的新一轮开发；REWORK/BLOCKED 不能直接接受');
     if (review.spec !== 'pass' || review.quality !== 'pass' || !Array.isArray(review.blocking_findings) || review.blocking_findings.length) fail('AUDIT_FAILED', '需求审查、质量审查均须通过，阻塞问题必须清零');
+    if (run.task.not_done_if?.length && !review.not_done_review?.trim()) fail('NOT_DONE_REVIEW_REQUIRED', '任务声明了 not_done_if，审查需在 not_done_review 中逐条说明核对结论');
+    if (!evidence.changes.length && !review.no_change_reason?.trim()) fail('NO_CHANGES', '本轮没有任何文件改动；确属无需改动时在 no_change_reason 说明原因');
     if (!Array.isArray(review.acceptance)) fail('INVALID_REVIEW', '缺少逐项验收证据');
     for (const a of run.task.acceptance.filter(x => x.required)) {
       const rows = review.acceptance.filter(x => x.id === a.id);

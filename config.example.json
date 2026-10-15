@@ -1,0 +1,12 @@
+{
+  "_codex_bin": "codex 可执行文件；空值表示从 PATH 查找 codex",
+  "codex_bin": "",
+  "_node_bin": "node 可执行文件；空值表示先从 PATH 查找 node，找不到再用 codex 同目录的 node",
+  "node_bin": "",
+  "_proxy": "Jev 等外网调用代理；空字符串表示不用代理，例如 http://127.0.0.1:7890",
+  "proxy": "",
+  "_dsh_homes": "DeepSeek dsh 数据目录列表，供账本读取用量；支持 ~/ 和 $HOME/",
+  "dsh_homes": [],
+  "_repo_roots": "账本识别仓库的父目录列表；支持 ~/、$HOME/ 和绝对路径",
+  "repo_roots": ["~/Desktop", "~/code", "~/projects", "~/src"]
+}

@@ -27,7 +27,7 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--surface-0); color: var(--text-primary); font: 14px/1.5 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
-main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
+main { max-width: 1680px; margin: 0 auto; padding: 24px 16px 48px; }
 h1 { font-size: 20px; margin: 0 0 4px; }
 h2 { font-size: 15px; margin: 0 0 12px; }
 .sub { color: var(--text-secondary); font-size: 13px; }
@@ -51,6 +51,9 @@ th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--grid
 th { color: var(--text-secondary); font-weight: 500; font-size: 12px; }
 td.num, th.num { text-align: right; }
 td.title { white-space: normal; min-width: 200px; color: var(--text-secondary); }
+.long-session { background: color-mix(in srgb, var(--codex) 14%, var(--surface-1)); }
+.long-session td:first-child { border-left: 3px solid var(--codex); }
+.long-session td.num { color: color-mix(in srgb, var(--codex) 65%, var(--text-primary)); font-weight: 600; }
 .tag { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 11px; border: 1px solid var(--border); color: var(--text-secondary); }
 .who { display: inline-flex; align-items: center; gap: 6px; }
 details summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; margin-top: 10px; }
@@ -69,7 +72,7 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 12px
   <section class="card">
     <h2>任务对照：自己做 vs 派出去</h2>
     <div class="scroll"><table id="tasks"></table></div>
-    <div class="note">按任务起止时间窗口归账：窗口内三方的所有调用都算进该任务。金额为按 API 标价折算的“等价美元”，用于横向比较，不是订阅的实际扣费。</div>
+    <div class="note">派活按起止时间窗口归账；note 和缺少 start 的记录没有窗口，不计 token。实际轮数只展示手动记录，不用调用次数代替。金额为按 API 标价折算的“等价美元”，用于横向比较，不是订阅的实际扣费。</div>
   </section>
 
   <section class="card">
@@ -87,7 +90,8 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 12px
   </section>
 
   <section class="card">
-    <h2>最近会话</h2>
+    <h2>会话消耗（按花费降序，前 200）</h2>
+    <div class="sub">超过 80 次调用的长会话标红</div>
     <div class="scroll"><table id="sessions"></table></div>
   </section>
 </main>
@@ -119,9 +123,9 @@ $('tiles').innerHTML = WHO.map(w => {
 
 // 任务对照
 (() => {
-  const rows = [...DATA.tasks].sort((a, b) => b.start - a.start);
-  if (!rows.length) { $('tasks').outerHTML = '<div class="empty">还没有记录任务。用 <code>node ledger.mjs task start &lt;id&gt; --mode self|delegated</code> 开始记账。</div>'; return; }
-  const head = `<tr><th>任务</th><th>方式</th><th>时间</th>${WHO.map(w => `<th class="num">${w.name}</th>`).join('')}<th class="num">合计</th><th class="num" title="开工前预估：自己做要几轮 / 实际 Claude 调用次数">预估/实际轮</th><th>Claude 占比</th><th class="num">Codex 额度</th></tr>`;
+  const rows = [...DATA.tasks].sort((a, b) => (b.start ?? b.end ?? b.ts) - (a.start ?? a.end ?? a.ts));
+  if (!rows.length) { $('tasks').outerHTML = '<div class="empty">小活不用记账。派活用 task start/end；预估≥4轮仍自己做用 task note 记录轮数和理由。</div>'; return; }
+  const head = `<tr><th>任务</th><th>方式</th><th>时间</th>${WHO.map(w => `<th class="num">${w.name}</th>`).join('')}<th class="num">合计</th><th class="num">预估轮数</th><th class="num">实际轮数</th><th>不派理由</th><th>Claude 占比</th><th class="num">Codex 额度</th></tr>`;
   const body = rows.map(t => {
     const total = t.all.usd || 1e-12;
     const share = WHO.map(w => `<span title="${w.name} ${usd(t.by[w.key].usd)}" style="flex:${t.by[w.key].usd / total};background:var(--${w.key})"></span>`).join('');
@@ -129,11 +133,12 @@ $('tiles').innerHTML = WHO.map(w => {
     return `<tr>
       <td class="title"><b>${esc(t.title)}</b>${t.open ? ' <span class="tag">进行中</span>' : ''}${t.note ? `<br>${esc(t.note)}` : ''}</td>
       <td><span class="tag">${t.mode === 'self' ? '自己做' : '派出去'}</span></td>
-      <td>${time(t.start)}</td>
+      <td>${time(t.start ?? t.end ?? t.ts)}${t.start == null ? '<br><span class="sub">无窗口</span>' : ''}</td>
       ${WHO.map(w => `<td class="num" title="${tok(t.by[w.key].total)} token，输出 ${tok(t.by[w.key].output)}">${usd(t.by[w.key].usd)}<br><span class="sub">${tok(t.by[w.key].output)} 出</span></td>`).join('')}
       <td class="num"><b>${usd(t.all.usd)}</b></td>
-      <td class="num">${t.estimate ?? '—'} / ${t.by.claude.calls}</td>
-      <td class="num">${t.estimate ?? '—'} / ${t.by.claude.calls}</td>
+      <td class="num">${t.estimate ?? '—'}</td>
+      <td class="num">${t.actual ?? '—'}</td>
+      <td class="title">${esc(t.why || '—')}</td>
       <td><div class="share">${share}</div><span class="sub">${Math.round(t.by.claude.usd / total * 100)}%</span></td>
       <td class="num">${q}</td></tr>`;
   }).join('');
@@ -243,14 +248,13 @@ function niceMax(v) { if (v <= 0) return 1; const p = 10 ** Math.floor(Math.log1
   host.prepend(svg);
 })();
 
-// 最近会话
+// 会话按花费展示；调用数超过 80 次提示长会话消耗。
 (() => {
-  const rows = DATA.sessions.slice(0, 60);
-  const totals = {};
-  for (const s of rows) totals[s.who + s.id] = 0;
-  $('sessions').innerHTML = `<tr><th>谁</th><th>开始</th><th>时长</th><th>来源</th><th>内容</th><th>目录</th></tr>` + rows.map(s => `<tr>
+  const rows = DATA.sessions;
+  $('sessions').innerHTML = `<tr><th>谁</th><th>开始</th><th>时长</th><th class="num">调用次数</th><th class="num">折算$</th><th>仓库</th><th>来源</th><th>内容</th><th>目录</th></tr>` + rows.map(s => `<tr${s.calls > 80 ? ' class="long-session"' : ''}>
     <td><span class="who">${dot(s.who)}${(WHO.find(w => w.key === s.who) || { name: s.who }).name}</span></td>
     <td>${time(s.start)}</td><td>${Math.max(1, Math.round((s.end - s.start) / 60000))} 分钟</td>
+    <td class="num">${s.calls}</td><td class="num" title="${tok(s.tokens)} token">${usd(s.usd)}</td><td class="title">${esc(s.repos.join('、') || '—')}</td>
     <td><span class="tag">${esc(s.who === 'codex' ? (s.source === 'exec' ? 'Claude 派发' : s.source || '') : s.who === 'deepseek' ? '派发' : '对话')}</span></td>
     <td class="title">${esc(s.title)}</td><td class="sub">${esc((s.cwd || '').replace(/^\/Users\/[^/]+/, '~'))}</td></tr>`).join('');
 })();

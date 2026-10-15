@@ -60,7 +60,7 @@ function setup(name) {
     return { p, done };
   }
   const call = async args => start(args).done;
-  const task = (id, extra = {}) => ({ id, leader: 'codex', workspace: ws, brief: '离线验证 fixture', depends_on: [], write_scope: [`${id}.mjs`], timeout_seconds: 10, acceptance: [{ id: 'A1', description: '示例结果正确', required: true }], checks: [{ id: 'syntax', kind: 'syntax', argv: [process.execPath, '--check', `${id}.mjs`] }], ...extra });
+  const task = (id, extra = {}) => ({ id, leader: 'codex', workspace: ws, brief: '离线验证 fixture', depends_on: [], write_scope: [`${id}.mjs`], timeout_seconds: 10, acceptance: [{ id: 'A1', description: '示例结果正确', required: true }], checks: [{ id: 'syntax', kind: 'syntax', argv: [process.execPath, '--check', `${id}.mjs`] }], ...(extra.risk === 'high' && { blocking_criteria: ['验收标准未满足即阻塞'] }), ...extra });
   function saveTask(t) { const p = path.join(root, `${t.id}.task.json`); json(p, t); return p; }
   const run = (t, executor, flags = []) => start(['run', '--task', saveTask(t), '--dsh-bin', bin, '--dsh-home', home, ...(executor ? ['--executor', executor] : []), ...flags]);
   function stateOf(id) {
@@ -194,6 +194,9 @@ await scenario('sensitive-risk-and-keywords-refuse-deepseek', async s => {
   }
   const both = taskSensitivity(validateTask(s.task('both', {risk:'high',brief:'PASSWORD 密钥'})));
   assert.deepEqual(both.sensitive_reasons, ['risk=high', 'keyword=password', 'keyword=密钥']);
+  // risk=high 必须开工前写定阻塞标准；not_done_if 写了就不能是空清单。
+  assert.throws(() => validateTask(s.task('noBlocking', {risk:'high', blocking_criteria:undefined})), {code:'INVALID_TASK'});
+  assert.throws(() => validateTask(s.task('emptyNotDone', {not_done_if:[]})), {code:'INVALID_TASK'});
   // Preparing a task makes no model call and remains allowed.
   assert.equal((await s.call(['run', '--task', s.saveTask(s.task('prepareHigh', {risk:'high'})), '--prepare'])).code, 0);
 });
@@ -268,8 +271,9 @@ await scenario('completed-fixture-review-gates', async s => {
   const store = new Store(s.state);
   async function completed(id, extra = {}, executor = 'deepseek') {
     const task = validateTask(s.task(id, {leader:'claude',checks:[],...extra}));
+    const baseline = capture(task);  // 先拍快照再写文件，审查时才有改动（零改动会被 NO_CHANGES 拦下）
     write(path.join(s.ws, `${id}.mjs`), 'export const value=42;\n');
-    const run = {id:uid('run'), key:taskKey(task), task, executor, attempt:1, status:'REVIEW', baseline:capture(task), result:{exit_code:0,stdout:'fixture complete'}, web:{enabled:false}};
+    const run = {id:uid('run'), key:taskKey(task), task, executor, attempt:1, status:'REVIEW', baseline, result:{exit_code:0,stdout:'fixture complete'}, web:{enabled:false}};
     atomic(path.join(store.runDir(run.id),'run.json'),run);
     await store.transaction(data => {data.tasks[run.key]={id,latest_run:run.id,status:'REVIEW',scopes:scopes(task),deepseek_attempts:1};});
     return run;
@@ -492,8 +496,9 @@ await scenario('explicit-takeover-and-leader-self-implementation', async s => {
   manual = s.run(t, 'claude'); r = await s.waitRun(t.id, x => x.status === 'RUNNING');
   await s.collect(r.id, ['--finish']); assert.equal((await manual.done).code, 0);
   await s.collect(r.id, ['--verify']);
-  assert((await s.review(s.stateOf(t.id), 'accept', {}, 2)).err.includes('CROSS_REVIEW_REQUIRED'));
-  await s.review(s.stateOf(t.id), 'accept', {cross_review:{reviewer:'codex',decision:'pass',summary:'independent review'}});
+  const noChange = {no_change_reason:'离线 fixture 的手动执行不写文件'};
+  assert((await s.review(s.stateOf(t.id), 'accept', noChange, 2)).err.includes('CROSS_REVIEW_REQUIRED'));
+  await s.review(s.stateOf(t.id), 'accept', {...noChange, cross_review:{reviewer:'codex',decision:'pass',summary:'independent review'}});
 });
 
 await scenario('config-missing-settings-credential-and-web-off', async s => {

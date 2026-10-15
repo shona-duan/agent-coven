@@ -7,6 +7,8 @@
   "spec": "pass",
   "quality": "pass",
   "blocking_findings": [],
+  "not_done_review": "任务有 not_done_if 时必填：逐条说明如何确认没有出现这些情况。",
+  "_no_change_reason": "本轮零改动（collect 输出 no_changes=true）时才填：为什么无需改动也算完成；不用时删除本行",
   "acceptance": [
     {"id": "A1", "status": "pass", "evidence": "填写实际文件/行号与检查日志路径；不能只写已完成。"},
     {"id": "A2", "status": "pass", "evidence": "说明如何对照 before 快照确认现有接口和用户改动得到保留。"}

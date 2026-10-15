@@ -13,6 +13,8 @@
 - [Aider Architect/Editor](https://aider.chat/docs/usage/modes.html)：设计与编辑分工
 - [Superpowers subagent-driven-development](https://github.com/obra/superpowers/blob/main/skills/subagent-driven-development/SKILL.md)：任务契约、逐任务审查、最终整体审查
 
+2026-10-14 参考 [Agent-Skills-for-Context-Engineering](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering) 的 long-horizon-prompting / self-improvement-loops 补充：`not_done_if`（防"答案形状的半成品"）、零改动报警（防空转被当成完成）、high 风险的 `blocking_criteria`（防"审查老虎机"无休止返工）。
+
 控制器是当前组长会话。脚本不冒充任何模型，不做语义审查，也不调用 Claude/Codex；`reviewer` 字段是责任标记，不是身份认证。
-默认最多两个 writer、DeepSeek 两次调用后交另一家大模型接手、30 分钟超时，是保守的调度默认值。
+默认最多两个 writer、DeepSeek 三次调用后接手、30 分钟超时，是保守的调度默认值。
 文件锁用于协作，不能约束同一用户下的恶意程序；敏感代码仍需系统级隔离。

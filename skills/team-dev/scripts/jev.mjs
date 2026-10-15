@@ -3,17 +3,23 @@
 // Jev 只给概率化判断，派给谁、要不要升级风险由下面的代码规则决定，调阈值不必重问模型。
 //   node jev.mjs triage --task /abs/task.json [--leader claude|codex]
 //   node jev.mjs screen --run-id run-UUID [--state-root /state]
+//   node jev.mjs screen --diff /abs/x.patch --brief '说明'|@/abs/brief.txt [--scope a,b] [--risk low|mid|high] [--id 名称]
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-// 需要代理时设置 HTTPS_PROXY 或 TEAM_DEV_JEV_PROXY；未启用 Node 环境代理时带上代理变量重启自身。
+// 本机配置可省略，说明键不参与配置。
+let config = {};
+try { config = Object.fromEntries(Object.entries(JSON.parse(fs.readFileSync(new URL('../../../config.json', import.meta.url), 'utf8'))).filter(([key]) => !key.startsWith('_'))); }
+catch (e) { if (e.code !== 'ENOENT') throw e; }
+const proxy = process.env.HTTPS_PROXY || process.env.https_proxy || (process.env.AGENT_HUB_PROXY ?? process.env.TEAM_DEV_JEV_PROXY ?? config.proxy ?? '');
+if (proxy) process.env.HTTPS_PROXY = proxy;
+
+// 未启用 Node 环境代理时带上所选代理变量重启自身。
 if (!process.env.NODE_USE_ENV_PROXY) {
   const env = { ...process.env, NODE_USE_ENV_PROXY: '1', NODE_NO_WARNINGS: '1' };
-  env.HTTPS_PROXY ||= env.https_proxy || env.TEAM_DEV_JEV_PROXY || '';
-  if (!env.HTTPS_PROXY) delete env.HTTPS_PROXY;
   const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...process.argv.slice(2)], { stdio: 'inherit', env });
   process.exit(r.status ?? 1);
 }
@@ -143,11 +149,20 @@ const SCREEN = {
 const DIFF_LIMIT = 60000; // 约 2 万 token，留出 32k 的 state 预算
 
 async function screen(o) {
-  if (!o['run-id']) fail('ARGUMENT_ERROR', '需要 --run-id');
-  const root = o['state-root'] || process.env.TEAM_DEV_STATE || path.join(os.homedir(), 'agent-hub/state/team-dev');
-  const dir = path.join(root, 'runs', o['run-id']);
-  const run = JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8'));
-  let diff = fs.existsSync(path.join(dir, 'changes.patch')) ? fs.readFileSync(path.join(dir, 'changes.patch'), 'utf8') : '';
+  let run, diff;
+  if (o.diff) {
+    // 日常派活没有 team-dev 运行记录：直接给 diff 文件和任务说明。
+    if (!o.brief) fail('ARGUMENT_ERROR', '--diff 需要同时给 --brief（文字，或 @文件路径）');
+    const brief = o.brief.startsWith('@') ? fs.readFileSync(o.brief.slice(1), 'utf8') : o.brief;
+    run = { id: null, task: { id: o.id || path.basename(o.diff), brief, write_scope: o.scope ? o.scope.split(',') : [], risk: o.risk || 'mid' } };
+    diff = fs.readFileSync(o.diff, 'utf8');
+  } else {
+    if (!o['run-id']) fail('ARGUMENT_ERROR', '需要 --run-id，或 --diff 文件 --brief 说明');
+    const root = o['state-root'] || process.env.TEAM_DEV_STATE || path.join(os.homedir(), 'agent-hub/state/team-dev');
+    const dir = path.join(root, 'runs', o['run-id']);
+    run = JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8'));
+    diff = fs.existsSync(path.join(dir, 'changes.patch')) ? fs.readFileSync(path.join(dir, 'changes.patch'), 'utf8') : '';
+  }
   if (!diff.trim()) fail('NO_DIFF', '先运行 collect 生成 changes.patch');
   const truncated = diff.length > DIFF_LIMIT;
   if (truncated) diff = diff.slice(0, DIFF_LIMIT);
@@ -167,4 +182,4 @@ const [cmd, ...rest] = process.argv.slice(2);
 const o = args(rest);
 if (cmd === 'triage') await triage(o);
 else if (cmd === 'screen') await screen(o);
-else fail('ARGUMENT_ERROR', '用法: triage --task /abs/task.json [--leader claude|codex] | screen --run-id run-UUID [--state-root /state]');
+else fail('ARGUMENT_ERROR', '用法: triage --task /abs/task.json [--leader claude|codex] | screen --run-id run-UUID [--state-root /state] | screen --diff 文件 --brief 说明');

@@ -9,6 +9,8 @@
   "depends_on": [],
   "write_scope": ["src/greet.mjs"],
   "timeout_seconds": 1800,
+  "not_done_if": ["改测试或删检查让它通过", "只留 TODO/占位实现", "悄悄缩小需求范围"],
+  "_blocking_criteria": ["仅 risk=high 必填：交叉审查中哪些问题算阻塞，开工前写定；不用时删除本行"],
   "acceptance": [
     {"id": "A1", "description": "非空名字正确去除首尾空白，空白名字返回 Hello, world!", "required": true},
     {"id": "A2", "description": "现有导出接口及用户已有改动得到保留", "required": true}

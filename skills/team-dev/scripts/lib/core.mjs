@@ -75,6 +75,9 @@ export function validateTask(raw) {
     a.required ??= true;
     if (typeof a.required !== 'boolean') fail('INVALID_TASK', 'required 必须是布尔值');
   }
+  const stringList = (value, name) => { if (!Array.isArray(value) || !value.length || value.some(x => typeof x !== 'string' || !x.trim())) fail('INVALID_TASK', `${name} 必须是非空字符串数组`); };
+  if (t.not_done_if !== undefined) stringList(t.not_done_if, 'not_done_if');
+  if (t.risk === 'high' || t.blocking_criteria !== undefined) stringList(t.blocking_criteria, 'blocking_criteria（risk=high 必填：交叉审查中哪些问题算阻塞）');
   t.checks ??= [];
   if (!Array.isArray(t.checks)) fail('INVALID_TASK', 'checks 必须为数组');
   uniqueIds(t.checks, 'checks');

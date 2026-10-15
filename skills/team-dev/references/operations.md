@@ -78,6 +78,8 @@ node "$SKILL_DIR/scripts/dsh.mjs" web --run-id run-UUID --state-root /该任务�
 | `write_scope` | 非空的相对文件/目录数组；无 glob，无 `..`，不含 `.git`；目录含后代 |
 | `timeout_seconds` | 默认 1800；允许 1～43200，在派发前设定 |
 | `acceptance` | 非空数组，包含唯一 `id`、`description` 和 `required`（默认 true） |
+| `not_done_if` | 可选，非空字符串数组：列出"看似完成其实不算"的情况（改测试让它绿、留占位、缩小范围等）；会单独写进执行者提示词，accept 时要求 `not_done_review` |
+| `blocking_criteria` | risk=high 必填，非空字符串数组：交叉审查中哪些问题算阻塞，开工前写定；不在其中的意见记为非阻塞建议 |
 | `checks` | 可空；每项包含唯一 `id`、`kind`、`argv`，可选 `cwd`（默认 `.`）、`timeout_seconds`（默认 120，上限 1800） |
 
 检查 `kind` 为 `syntax/typecheck/compile/test/inspection`。不把任意字符串交给 Shell。
@@ -98,6 +100,8 @@ READY 可首次派发，REWORK 可派发下一轮；ACCEPTED 的重复派发直�
 可选 `takeover_by`（`claude|codex`，缺省为 leader），用于 takeover 或 rework 时改换执行者。
 风险为 high 且 decision=accept 时：若最后一轮 executor 是非组长的 claude/codex，则无需 `cross_review`；否则必须有 `cross_review={reviewer: 与 leader 不同的 claude|codex, decision: "pass", summary}`，缺失报 `CROSS_REVIEW_REQUIRED`。low/mid 不要求。判断以最后一轮 executor 为准：非组长接手者需读懂并修改前几轮代码，加上组长验收，视为两家参与。
 接受还要求 `spec="pass"`、`quality="pass"`、`blocking_findings=[]`，以及每项必需验收的唯一 `id`、`status="pass"`、非空 `evidence`。
+任务有 `not_done_if` 时，accept 还要求非空 `not_done_review`，否则报 `NOT_DONE_REVIEW_REQUIRED`。
+本轮快照与开始时相比零改动时，`collect` 输出 `no_changes: true`；accept 必须填 `no_change_reason`，否则报 `NO_CHANGES`（防止"报告说做完了、实际什么都没改"）。
 `evidence` 应包含实际文件/行号或日志路径以及它如何满足要求，不能只复述结论。
 
 所有任务声明的检查必须由本脚本实际执行并通过，且绑定同一快照。验证过程改变了受审源文件，或验证后再次改代码，会阻止接受，需重新审查/检查。
