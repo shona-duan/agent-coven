@@ -64,7 +64,8 @@ def record(*args):
     try: subprocess.run(ledger + list(args), capture_output=True, env=env, timeout=30)
     except Exception: pass
 snap = jev_screen.snapshot(cwd) if a.sandbox != 'read-only' else None
-record('start', run.name, '--mode', 'delegated', '--title', 'Codex：' + task.splitlines()[0].lstrip('# ')[:60])
+if os.environ.get('AGENT_HUB_LEDGER_SKIP') != '1':
+    record('start', run.name, '--mode', 'delegated', '--title', 'Codex：' + task.splitlines()[0].lstrip('# ')[:60])
 try:
     r = subprocess.run(cmd, input=task, capture_output=True, text=True, env=env, timeout=a.timeout)
     code, out, err, timed_out = r.returncode, r.stdout, r.stderr, False
@@ -72,7 +73,8 @@ except subprocess.TimeoutExpired as e:
     code, out, err, timed_out = 124, e.stdout or '', e.stderr or '', True
     out = out.decode() if isinstance(out, bytes) else out
     err = err.decode() if isinstance(err, bytes) else err
-record('end', run.name, '--force', '--note', f'exit={code}' + (' 超时' if timed_out else ''))
+if os.environ.get('AGENT_HUB_LEDGER_SKIP') != '1':
+    record('end', run.name, '--force', '--note', f'exit={code}' + (' 超时' if timed_out else ''))
 (run / 'events.jsonl').write_text(out)
 (run / 'stderr.log').write_text(err)
 thread = None

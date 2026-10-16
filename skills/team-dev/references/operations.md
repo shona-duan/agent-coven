@@ -28,7 +28,7 @@ Harness home：`--dsh-home` → `DSH_HOME` → 配置 `dsh_home` → `~/.dsh`。
 | 命令 | 输入 | 行为与输出 |
 |---|---|---|
 | `doctor` | `--workspace`，可选 Harness 参数 | 检查入口、版本、凭据存在性、权限、可选 `expected_model` 比对及 Web 登录/只读列表；JSON，`api_request_made=false` |
-| `run` | `--task /task.json`，可选 `--prepare` 或 `--executor deepseek\|claude\|codex` | executor 默认 deepseek；prepare 仅持久化 READY；实际执行校验依赖/范围并取得锁，先返回 run id：deepseek 由脚本直接调用 Harness，claude/codex 进入受监督写入（组长在锁内派活或亲自修改，再以 `collect --finish` 收尾） |
+| `run` | `--task /task.json`，可选 `--prepare` 或 `--executor deepseek\|claude\|codex` | executor 默认 deepseek；prepare 仅持久化 READY；实际执行校验依赖/范围并取得锁，先返回 run id：deepseek 由脚本直接调用 Harness；codex 由脚本按任务包生成说明并调用 `~/agent-hub/codex_task.py`（不另记账），跑完自动收集进 REVIEW/BLOCKED；claude 进入受监督写入（组长在锁内亲自修改，再以 `collect --finish` 收尾） |
 | `status` | 可选 `--run-id` / `--workspace` | 只读查看状态、活动 lease、冲突；单次运行还检查验收后的文件变化 |
 | `stop` | `--run-id` | 终止该运行的开发或检查监督进程；孤儿恢复核对 PID 出生时间，不使用名称匹配终止进程 |
 | `collect` | `--run-id`，可选下列动作之一 | 收集快照、变更与审查证据；动作执行后输出新的 JSON |
@@ -56,7 +56,7 @@ node "$SKILL_DIR/scripts/dsh.mjs" web --run-id run-UUID --state-root /该任务�
 
 `collect` 动作一次只能选一个：
 
-- `--finish`：Claude/Codex 受监督执行完成写入，释放写入锁并进入 REVIEW；只有正在运行的 claude/codex 受监督任务能用。
+- `--finish`：Claude 受监督执行完成写入，释放写入锁并进入 REVIEW；只有正在运行的 claude 任务能用（codex 已由 run 一条命令收尾）。
 - `--verify`：在同工作区没有 writer 时，独立执行所有声明的检查。检查使用 argv 数组、`shell=false`，按顺序运行；失败结果保留，不标记 ACCEPTED。
 - `--review /review.json`：提交组长的语义审查；核对 run id、快照指纹、必需检查与验收证据，更新状态。
 
@@ -116,7 +116,7 @@ REWORK 不能直接改为 ACCEPTED；必须经过新的成功开发/接手轮次
 
 DeepSeek 达到调用上限后，默认由另一家大模型接手（takeover 未指定 takeover_by 时同样默认另一家）。敏感任务（risk=high 或命中敏感词）派 deepseek 报 SENSITIVE_NOT_DELEGATABLE，可用任务字段 sensitive_override 写明误报原因放行。提前接手使用 decision=takeover。超时或监督器失败也计入调用次数，不能无界重试。
 rework 后状态记录的 `next_executor`：有 `takeover_by` 用它；本轮是 claude/codex 则保持原执行者；本轮是 deepseek 且次数已满 3 则为 leader，否则 deepseek。
-接手示例顺序为 `collect --review`（takeover，`takeover_by` 选 claude|codex）→ `run --executor <takeover_by>` → 执行者修改 → `collect --finish` → `collect --verify` → `collect --review`（accept）。
+接手示例顺序为 `collect --review`（takeover，`takeover_by` 选 claude|codex）→ `run --executor <takeover_by>`（codex 自动跑完；claude 由组长修改后 `collect --finish`）→ `collect --verify` → `collect --review`（accept）。
 已验收依赖出现变化时，可用同样的接手流程进行一次无需模型请求的核对/补验轮次，明确实际变化来源。
 
 ## 证据与观测覆盖

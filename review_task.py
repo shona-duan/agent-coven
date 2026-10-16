@@ -97,7 +97,15 @@ def main():
     if not args.run and not all((args.diff, args.brief, args.cd)):
         parser.error('需要 --run，或同时提供 --diff / --brief / --cd')
     source = args.run.expanduser().resolve() if args.run else None
-    implementer = args.implementer
+    team_run = None
+    if source and (source / 'run.json').is_file():
+        try:
+            team_run = json.loads((source / 'run.json').read_text(encoding='utf-8'))
+            if not isinstance(team_run.get('task'), dict) or team_run.get('executor') not in MODELS:
+                raise ValueError('team-dev run.json 缺少 task 或有效 executor')
+        except (OSError, ValueError, AttributeError) as exc:
+            parser.error(str(exc))
+    implementer = args.implementer or (team_run['executor'] if team_run else None)
     if not implementer and source:
         if source.name.startswith('codex-'):
             implementer = 'codex'
@@ -109,7 +117,22 @@ def main():
     if reviewer == implementer:
         parser.error('审查者不能与实现者相同')
     try:
-        if source:
+        if team_run:
+            task = team_run['task']
+            cwd = Path(task['workspace']).expanduser().resolve(strict=True)
+            sections = [('任务说明', task['brief']),
+                        ('验收标准', [item['description'] for item in task['acceptance']]),
+                        ('不算完成清单', task.get('not_done_if', [])),
+                        ('写入范围', task['write_scope'])]
+            if task.get('blocking_criteria'):
+                sections.append(('阻塞标准', task['blocking_criteria']))
+            brief = '\n\n'.join('## ' + title + '\n' + (content if isinstance(content, str)
+                                  else '\n'.join('- ' + item for item in content))
+                                  for title, content in sections)
+            diff_file = source / 'changes.patch'
+            if not diff_file.is_file():
+                raise ValueError('缺少 changes.patch，请组长先运行 collect --run-id <运行标识>')
+        elif source:
             metadata = json.loads((source / 'result.json').read_text(encoding='utf-8'))
             workspace = metadata.get('cwd') or metadata.get('workspace')
             if not isinstance(workspace, str) or not workspace:
@@ -121,11 +144,12 @@ def main():
             brief_file, diff_file = args.brief.expanduser(), args.diff.expanduser()
         if not cwd.is_dir():
             raise ValueError('工作区必须是目录')
-        brief = brief_file.read_text(encoding='utf-8').strip()
+        if not team_run:
+            brief = brief_file.read_text(encoding='utf-8').strip()
         diff = diff_file.read_text(encoding='utf-8')
         if not brief:
             raise ValueError('任务说明不能为空')
-    except (OSError, ValueError, TypeError, AttributeError) as exc:
+    except (OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
         parser.error(str(exc))
 
     run = ROOT / 'runs' / ('review-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f'))

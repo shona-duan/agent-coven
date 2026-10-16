@@ -19,7 +19,7 @@
 
 | 原则 | 做法 |
 |---|---|
-| **方案定了就派** | 组长自己做要 N 轮调用：N ≤ 2 自己做；方案已定、说得清、N ≥ 3 默认派出去；不派要写理由。 |
+| **方案定了就派** | 组长自己做要调用 N 次工具：N ≤ 2 自己做；方案已定、说得清、N ≥ 3 默认派出去；不派要写理由。派出去后组长不在同一工作区改文件。 |
 | **执行者只拿结论** | 派活说明单列"已定的决策"（结论 + 一句理由，含否掉的方案），不给对话过程。 |
 | **便宜的先上，敏感的不下放** | 中文文档、测试清单、机械改先给 DeepSeek；鉴权、密码、token、支付相关的活代码拦截，只给 Codex / Claude。 |
 | **三道验收关** | 派完自动 Jev 初筛（报警器）→ 组长看 diff → mid 以上再做一次**无上下文审查**（审查者不是实现者、没看过对话）。 |
@@ -37,6 +37,7 @@
 | DeepSeek 最多 2 次、写入范围锁、高风险阻塞标准、零改动报警 | 代码拦截（team-dev 全流程） |
 | 审查者不能是实现者、审查只读 | 代码拦截（`review_task.py`） |
 | 派活自动记账、派完自动初筛、恢复会话后提醒 team-dev 仍启用 | 脚本 / 钩子自动做 |
+| 长会话提醒（80 次调用或 15 万 token 上下文）、一行交代写实际调用次数 | 钩子每条消息前给组长计数（`hooks/session-size.mjs`） |
 | 执行者不提交、不推送 | 写在派活说明里 |
 | 派不派、要不要审查、一行交代 | 靠组长自觉；账本能事后查到 |
 
@@ -61,7 +62,7 @@
 | 写一篇说明文档 | $0.16，2 次调用 | $0.38，5 次调用（含 1 次返工）+ DeepSeek $0.005 |
 | 加一个小命令 | $0.07，1 次调用 | $0.23，3 次调用 + DeepSeek $0.004 |
 
-所以 1–2 轮能做完的活自己做；**换任务开新会话**比任何派活策略都省。
+所以 1–2 次调用能做完的活自己做；**换任务开新会话**比任何派活策略都省。
 
 ---
 
@@ -72,6 +73,7 @@
 ```sh
 python3 ~/agent-hub/codex_task.py 任务.md --cd ~/my-repo --sandbox workspace-write   # 派给 Codex
 python3 ~/agent-hub/review_task.py --run ~/agent-hub/runs/codex-<时间戳>              # mid 以上：无上下文审查
+# --run 也接 team-dev 运行目录 state/team-dev/runs/run-*（自动读任务包、diff、实现者）
 ```
 
 派完自动记账、自动 Jev 初筛（结果在输出的 `jev_screen` 字段）。审查者自动选另一家（Codex 写的交给新开的 Claude 审），只读。
@@ -82,7 +84,8 @@ python3 ~/agent-hub/review_task.py --run ~/agent-hub/runs/codex-<时间戳>     
 用户 ──▶ 组长（Claude / Codex）
            │ 1. 写任务包 task.json（brief、已定的决策、write_scope、验收标准、不算完成清单、检查命令、risk）
            ▼
-         dsh.mjs run --executor deepseek|codex|claude   （取写入范围锁 + 快照；敏感任务拒绝下放 DeepSeek）
+         dsh.mjs run --executor deepseek|codex|claude   （取写入范围锁 + 快照；敏感任务拒绝下放 DeepSeek；
+                                                        deepseek / codex 一条命令跑完，claude 由组长做完后 collect --finish）
            ▼
          collect --verify    → 独立跑声明的检查（argv 数组，shell=false）
          jev.mjs screen      → 初筛：越界改动、删除原有行为、安全、半成品
@@ -113,6 +116,7 @@ review_task.py             # 无上下文审查（审查者≠实现者、只读
 jev_screen.py              # 派完自动 Jev 初筛
 evals/                     # 固定测试集运行器（数据自己攒，见 evals/README.md）
 hooks/skill-resume.mjs     # Claude Code 钩子：恢复/压缩会话后提醒 team-dev 仍启用
+hooks/session-size.mjs     # Claude Code 钩子：每条消息前报会话调用数和上下文大小，长会话提醒
 skills/team-dev/           # 全流程 skill：SKILL.md、任务/审查模板、dsh.mjs、jev.mjs、离线回归
 ledger/                    # 四方 token 账本 → dashboard.html
 config.example.json        # 本机配置模板（codex/node 路径、代理等）
@@ -153,6 +157,9 @@ node ~/agent-hub/skills/team-dev/scripts/dsh.mjs doctor --workspace /path/to/you
 可选的 Claude Code 钩子（恢复会话后提醒 team-dev 仍启用）：在 `~/.claude/settings.json` 的 `hooks.SessionStart`
 加一项 `matcher: "resume|compact"`，命令为 `node ~/agent-hub/hooks/skill-resume.mjs`。
 
+可选的会话计数钩子（每条消息前告诉组长已调用几次、上下文多大，超过 80 次调用或 15 万 token 提醒派活或开新会话）：
+在 `hooks.UserPromptSubmit` 加一项，命令为 `node ~/agent-hub/hooks/session-size.mjs`。
+
 ## 账本
 
 ```sh
@@ -160,7 +167,7 @@ node ~/agent-hub/ledger/ledger.mjs build && open ~/agent-hub/state/ledger/dashbo
 ```
 
 自动按会话汇总 Claude / Codex / DeepSeek 的调用数、折算金额和涉及仓库，长会话标红；派活脚本自动记账。
-小活不记；预估 ≥4 轮仍自己做才用 `ledger.mjs task note` 记一条。详见 [ledger/README.md](ledger/README.md)。
+小活不记；预估 ≥4 次调用仍自己做才用 `ledger.mjs task note` 记一条。详见 [ledger/README.md](ledger/README.md)。
 
 ## 作者与致谢
 
@@ -173,7 +180,7 @@ node ~/agent-hub/ledger/ledger.mjs build && open ~/agent-hub/state/ledger/dashbo
 - 审查按风险分级，不搞层层审
 - 大脑一个就够了，多了反而更乱：组长拍板，执行者只拿结论
 - 组长的对话要保持短小，过程长的活派出去
-- 派不派活按轮数算，不按代码行数算
+- 派不派活按调用次数算，不按代码行数算
 - 同一个问题修两次还不好，就换另一家模型来查，不硬磨第三次
 - 每件活做完都要用一行交代清楚
 

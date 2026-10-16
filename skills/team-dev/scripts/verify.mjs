@@ -10,6 +10,8 @@ import { identity, alive, readJSON, atomic, sleep, inventory, changed, validateT
 import { defaultStateRoot } from './lib/config.mjs';
 import { resolveOptions } from './dsh.mjs';
 import { doctor, childEnvironment, makePrompt } from './lib/runtime.mjs';
+// 所有场景（含直接 spawn 的）都不写真实账本。
+process.env.AGENT_HUB_LEDGER = path.join(os.tmpdir(), 'team-dev-verify-absent-ledger.mjs');
 
 const base = path.resolve(process.argv[2] || path.join(process.cwd(), 'work', `dsh-validation-${Date.now()}`));
 fs.mkdirSync(base, { recursive: true });
@@ -39,6 +41,36 @@ if(f.mode!=='empty')console.log('DONE: '+target+(f.mode==='secret'?' sk-offline-
 process.exit(0);
 `);
 
+const codexTask = path.join(base, 'fake-codex-task.py');
+write(codexTask, `import argparse, json, os, time
+from pathlib import Path
+p = argparse.ArgumentParser()
+p.add_argument('prompt', type=Path)
+p.add_argument('--cd', type=Path)
+p.add_argument('--sandbox')
+p.add_argument('--timeout', type=int)
+a = p.parse_args()
+assert os.environ.get('AGENT_HUB_LEDGER_SKIP') == '1'
+assert a.sandbox == 'workspace-write'
+prompt = a.prompt.read_text()
+assert 'Harness' not in prompt
+body = prompt.split('任务契约：\\n', 1)[1]
+task, _ = json.JSONDecoder().raw_decode(body)
+assert a.cd == Path(task['workspace']) and a.timeout == task['timeout_seconds']
+target = a.cd / task['write_scope'][0]
+target.parent.mkdir(parents=True, exist_ok=True)
+target.write_text('export const value = 42;\\n')
+mode = task.get('fixture', {}).get('mode')
+if mode == 'escape': (a.cd / 'unexpected.txt').write_text('out of scope')
+if mode == 'sleep': time.sleep(15)
+if mode == 'fail': raise SystemExit(1)
+if mode == 'raw':
+    print('plain report')
+else:
+    print('任务日志：fixture')
+    print(json.dumps({'final': 'done', 'jev_screen': {'fixture': True}}, indent=2))
+`);
+
 json(path.join(base, 'empty-config.json'), {});
 const results = [];
 function setup(name) {
@@ -53,6 +85,8 @@ function setup(name) {
     delete env.DEEPSEEK_API_KEY; delete env.DEEPSEEK_BASE_URL;
     for (const key of Object.keys(env)) if (key.startsWith('TEAM_DEV_') || ['DSH_BIN', 'DSH_HOME'].includes(key)) delete env[key];
     env.TEAM_DEV_CONFIG = path.join(base, 'empty-config.json');
+    env.AGENT_HUB_CODEX_TASK = codexTask;
+    env.AGENT_HUB_LEDGER = path.join(base, 'absent-ledger.mjs');
     const p = spawn(process.execPath, [cli, ...args, ...common], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     active.add(p); let out = '', err = '';
     p.stdout.on('data', d => out += d); p.stderr.on('data', d => err += d);
@@ -102,6 +136,43 @@ async function scenario(name, fn) {
   finally { await s.close(); }
   console.log(`${results.at(-1).status.toUpperCase()} ${name}`);
 }
+
+await scenario('codex-one-command-report-and-rework', async s => {
+  const t = s.task('codexAuto', {leader:'claude', not_done_if:['不能留占位']});
+  let outcome = await s.run(t, 'codex').done;
+  assert.equal(outcome.code, 0, outcome.err);
+  let r = s.stateOf(t.id);
+  assert.equal(r.status, 'REVIEW'); assert.equal(r.result.stdout, 'done');
+  assert.deepEqual(r.jev_screen, {fixture:true});
+  const dir = path.join(s.state, 'runs', r.id);
+  assert(fs.readFileSync(path.join(dir, 'worker.stdout.log'), 'utf8').includes('"final": "done"'));
+  assert(fs.existsSync(path.join(dir, 'changes.patch')));
+  assert(!fs.existsSync(path.join(dir, 'worker.patch.yml')));
+  assert((await s.call(['collect','--run-id',r.id,'--finish'])).err.includes('NOT_MANUAL_EXECUTOR'));
+  await s.review(r, 'rework', {summary:'请核对返工意见'});
+  outcome = await s.run(t, 'codex').done; assert.equal(outcome.code, 0, outcome.err);
+  r = s.stateOf(t.id);
+  assert(fs.readFileSync(path.join(s.state, 'runs', r.id, 'prompt.txt'), 'utf8').includes('请核对返工意见'));
+  assert.equal(r.result.stdout, 'done');
+});
+
+await scenario('codex-out-of-scope-blocked', async s => {
+  const t = s.task('codexEscape', {fixture:{mode:'escape'}});
+  assert.equal((await s.run(t, 'codex').done).code, 1);
+  const r = s.stateOf(t.id);
+  assert.equal(r.status, 'BLOCKED'); assert.equal(r.error.code, 'OUT_OF_SCOPE');
+});
+
+await scenario('codex-timeout-and-raw-report', async s => {
+  const t = s.task('codexTimeout', {fixture:{mode:'sleep'}, timeout_seconds:1});
+  assert.equal((await s.run(t, 'codex').done).code, 1);
+  const r = s.stateOf(t.id);
+  assert.equal(r.status, 'BLOCKED'); assert.equal(r.result.stop_reason, 'timeout');
+  assert.equal(alive(r.child), false);
+  const raw = s.task('codexRaw', {fixture:{mode:'raw'}});
+  const out = await s.run(raw, 'codex').done; assert.equal(out.code, 0, out.err);
+  assert.equal(s.stateOf(raw.id).result.stdout.trim(), 'plain report');
+});
 
 await scenario('doctor-no-model-call', async s => {
   const before = fs.existsSync(path.join(base, 'fake-invocations.log'));
@@ -233,18 +304,18 @@ await scenario('configured-three-attempts-and-last-chance-strategy', async s => 
 });
 
 await scenario('default-last-chance-strategy-and-takeover-by-priority', async s => {
-  const t = s.task('strategy'); assert.equal((await s.run(t).done).code, 0);
+  const t = s.task('strategy', {leader:'claude'}); assert.equal((await s.run(t).done).code, 0);
   await s.review(s.stateOf(t.id), 'rework');
   const denied = await s.run(t).done; assert.equal(denied.code, 2); assert(denied.err.includes('STRATEGY_CHANGE_REQUIRED'));
   await s.review(s.stateOf(t.id), 'rework', {strategy_change:'换策略核对文件'});
   assert.equal((await s.run(t).done).code, 0);
-  await s.review(s.stateOf(t.id), 'rework', {takeover_by:'codex'});
-  assert.equal(s.stateOf(t.id).next_executor, 'codex');
-  const exhausted = await s.run(t).done; assert(exhausted.err.includes('TAKEOVER_REQUIRED')); assert(exhausted.err.includes('--executor codex'));
-  const manual = s.run(t, 'codex'); const r = await s.waitRun(t.id, x => x.status === 'RUNNING');
+  await s.review(s.stateOf(t.id), 'rework', {takeover_by:'claude'});
+  assert.equal(s.stateOf(t.id).next_executor, 'claude');
+  const exhausted = await s.run(t).done; assert(exhausted.err.includes('TAKEOVER_REQUIRED')); assert(exhausted.err.includes('--executor claude'));
+  const manual = s.run(t, 'claude'); const r = await s.waitRun(t.id, x => x.status === 'RUNNING');
   await s.collect(r.id, ['--finish']); assert.equal((await manual.done).code, 0);
   // A manual executor is never forced through the DeepSeek strategy gate.
-  await s.review(s.stateOf(t.id), 'takeover'); assert.equal(s.stateOf(t.id).next_executor, 'claude');
+  await s.review(s.stateOf(t.id), 'takeover'); assert.equal(s.stateOf(t.id).next_executor, 'codex');
 });
 
 await scenario('one-attempt-immediate-takeover', async s => {
@@ -310,22 +381,22 @@ await scenario('completed-fixture-review-gates', async s => {
 });
 
 await scenario('manual-flow-without-subprocess-checks', async s => {
-  const t = s.task('manualOnly', {leader:'claude',risk:'high',checks:[]});
-  const running=s.run(t,'codex'); const r=await s.waitRun(t.id,x=>x.status==='RUNNING');
+  const t = s.task('manualOnly', {leader:'codex',risk:'high',checks:[]});
+  const running=s.run(t,'claude'); const r=await s.waitRun(t.id,x=>x.status==='RUNNING');
   write(path.join(s.ws,'manualOnly.mjs'),'export const value=42;\n');
   await s.collect(r.id,['--finish']); assert.equal((await running.done).code,0);
   await s.collect(r.id,['--verify']); await s.review(s.stateOf(t.id),'accept');
   assert.equal(s.stateOf(t.id).status,'ACCEPTED');
   assert((await s.call(['collect','--run-id',r.id,'--finish'])).err.includes('NOT_MANUAL_EXECUTOR'));
-  const next=s.task('manualRework',{leader:'claude',checks:[]});
+  const next=s.task('manualRework',{leader:'codex',checks:[]});
   let writer=s.run(next,'claude'); let current=await s.waitRun(next.id,x=>x.status==='RUNNING');
   write(path.join(s.ws,'manualRework.mjs'),'export const value=1;\n');
   await s.collect(current.id,['--finish']);assert.equal((await writer.done).code,0);
-  await s.review(s.stateOf(next.id),'takeover',{takeover_by:'codex'});
-  assert((await s.run(next,'claude').done).err.includes('EXECUTOR_MISMATCH'));
-  writer=s.run(next,'codex');current=await s.waitRun(next.id,x=>x.status==='RUNNING');
+  await s.review(s.stateOf(next.id),'takeover',{takeover_by:'claude'});
+  assert((await s.run(next,'codex').done).err.includes('EXECUTOR_MISMATCH'));
+  writer=s.run(next,'claude');current=await s.waitRun(next.id,x=>x.status==='RUNNING');
   await s.collect(current.id,['--finish']);assert.equal((await writer.done).code,0);
-  await s.review(s.stateOf(next.id),'rework');assert.equal(s.stateOf(next.id).next_executor,'codex');
+  await s.review(s.stateOf(next.id),'rework');assert.equal(s.stateOf(next.id).next_executor,'claude');
 });
 
 await scenario('ready-queue-and-concurrent-lock-recovery', async s => {
@@ -425,18 +496,18 @@ await scenario('recover-orphan-verification-lease', async s => {
 });
 
 await scenario('default-two-attempts-other-model-takeover', async s => {
-  const t = s.task('takeover', {leader:'claude'});
+  const t = s.task('takeover', {leader:'codex'});
   for (let n = 0; n < 2; n++) {
     assert.equal((await s.run(t).done).code, 0);
     await s.review(s.stateOf(t.id), 'rework', { strategy_change: '缩小实现并直接核对真实文件，演练接手门禁。' });
   }
-  assert.equal(s.stateOf(t.id).next_executor, 'codex');
-  const third = await s.run(t).done; assert.equal(third.code, 2); assert(third.err.includes('TAKEOVER_REQUIRED')); assert(third.err.includes('--executor codex'));
-  const manual = s.run(t, 'codex'); const r = await s.waitRun(t.id, x => x.executor === 'codex' && x.status === 'RUNNING');
+  assert.equal(s.stateOf(t.id).next_executor, 'claude');
+  const third = await s.run(t).done; assert.equal(third.code, 2); assert(third.err.includes('TAKEOVER_REQUIRED')); assert(third.err.includes('--executor claude'));
+  const manual = s.run(t, 'claude'); const r = await s.waitRun(t.id, x => x.executor === 'claude' && x.status === 'RUNNING');
   write(path.join(s.ws, 'takeover.mjs'), 'export const value = 100;\n');
   await s.collect(r.id, ['--finish']); assert.equal((await manual.done).code, 0);
   await s.collect(r.id, ['--verify']); await s.review(s.stateOf(t.id), 'accept');
-  assert.equal(s.stateOf(t.id).status, 'ACCEPTED'); assert.equal(s.stateOf(t.id).executor, 'codex');
+  assert.equal(s.stateOf(t.id).status, 'ACCEPTED'); assert.equal(s.stateOf(t.id).executor, 'claude');
 });
 
 await scenario('missing-lease-and-symlink-scope', async s => {
@@ -465,20 +536,20 @@ await scenario('leader-validation-and-high-risk-cross-review', async s => {
 });
 
 await scenario('first-manual-dispatch-high-risk-and-rework', async s => {
-  const first = s.task('firstManual', { leader: 'claude', risk: 'high' });
-  const initial = s.run(first, 'codex'); const initialRun = await s.waitRun(first.id, x => x.status === 'RUNNING');
+  const first = s.task('firstManual', { leader: 'codex', risk: 'high' });
+  const initial = s.run(first, 'claude'); const initialRun = await s.waitRun(first.id, x => x.status === 'RUNNING');
   write(path.join(s.ws, 'firstManual.mjs'), 'export const value = 0;\n');
   await s.collect(initialRun.id, ['--finish']); assert.equal((await initial.done).code, 0);
   await s.collect(initialRun.id, ['--verify']); await s.review(s.stateOf(first.id), 'accept');
   assert.equal(s.stateOf(first.id).status, 'ACCEPTED');
-  const t = s.task('manual', { leader: 'claude', risk: 'high' });
-  let manual = s.run(t, 'codex'); let r = await s.waitRun(t.id, x => x.status === 'RUNNING');
-  assert.equal(r.leader, 'claude'); assert.equal(r.risk, 'high');
+  const t = s.task('manual', { leader: 'codex', risk: 'high' });
+  let manual = s.run(t, 'claude'); let r = await s.waitRun(t.id, x => x.status === 'RUNNING');
+  assert.equal(r.leader, 'codex'); assert.equal(r.risk, 'high');
   write(path.join(s.ws, 'manual.mjs'), 'export const value = 1;\n');
   await s.collect(r.id, ['--finish']); assert.equal((await manual.done).code, 0);
-  await s.review(s.stateOf(t.id), 'rework'); assert.equal(s.stateOf(t.id).next_executor, 'codex');
-  assert((await s.run(t, 'claude').done).err.includes('EXECUTOR_MISMATCH'));
-  manual = s.run(t, 'codex'); r = await s.waitRun(t.id, x => x.status === 'RUNNING');
+  await s.review(s.stateOf(t.id), 'rework'); assert.equal(s.stateOf(t.id).next_executor, 'claude');
+  assert((await s.run(t, 'codex').done).err.includes('EXECUTOR_MISMATCH'));
+  manual = s.run(t, 'claude'); r = await s.waitRun(t.id, x => x.status === 'RUNNING');
   write(path.join(s.ws, 'manual.mjs'), 'export const value = 2;\n');
   await s.collect(r.id, ['--finish']); assert.equal((await manual.done).code, 0);
   await s.collect(r.id, ['--verify']); await s.review(s.stateOf(t.id), 'accept');
@@ -489,11 +560,10 @@ await scenario('explicit-takeover-and-leader-self-implementation', async s => {
   const t = s.task('explicit', { leader: 'claude', risk: 'high', sensitive_override:'离线 fixture，仅验证接手与交叉审查' });
   await s.run(t).done; await s.review(s.stateOf(t.id), 'takeover', {takeover_by:'codex'});
   assert((await s.run(t, 'claude').done).err.includes('EXECUTOR_MISMATCH'));
-  let manual = s.run(t, 'codex'); let r = await s.waitRun(t.id, x => x.status === 'RUNNING');
-  await s.collect(r.id, ['--finish']); assert.equal((await manual.done).code, 0);
+  assert.equal((await s.run(t, 'codex').done).code, 0);
   await s.review(s.stateOf(t.id), 'rework', {takeover_by:'claude'});
   assert.equal(s.stateOf(t.id).next_executor, 'claude');
-  manual = s.run(t, 'claude'); r = await s.waitRun(t.id, x => x.status === 'RUNNING');
+  const manual = s.run(t, 'claude'); const r = await s.waitRun(t.id, x => x.status === 'RUNNING');
   await s.collect(r.id, ['--finish']); assert.equal((await manual.done).code, 0);
   await s.collect(r.id, ['--verify']);
   const noChange = {no_change_reason:'离线 fixture 的手动执行不写文件'};

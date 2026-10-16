@@ -35,7 +35,7 @@ Web 按 web_mode=off|required；默认有 web-config.json 时 required，否则 
 可指定 --credential-file /absolute/credentials.json、--expected-model JSON、--web-mode off|required。
 DeepSeek 上限：--deepseek-max-attempts > TEAM_DEV_DEEPSEEK_MAX_ATTEMPTS > deepseek_max_attempts；默认 2，范围 1～3。
 run 使用 doctor 的相同 Harness 参数。运行记录中给出后续命令需要的 run_id。
-collect --finish 结束 Claude/Codex 受监督写入；--verify 独立运行任务检查；--review 提交任务组长审查。
+collect --finish 结束 Claude 受监督写入；--verify 独立运行任务检查；--review 提交任务组长审查。
 退出码：0=命令完成（不等于任务验收）；1=执行失败；2=前置条件/范围/验收门禁失败。
 `;
 
@@ -62,6 +62,7 @@ function ledger(...args) {
   if (!fs.existsSync(LEDGER)) return;
   try { spawnSync(process.execPath, [LEDGER, 'task', ...args], { stdio: 'ignore', timeout: 30000 }); } catch {}
 }
+const CODEX_TASK = process.env.AGENT_HUB_CODEX_TASK || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../codex_task.py');
 const short = r => ({ run_id: r.id, task_id: r.task.id, workspace: r.task.workspace, status: r.status, executor: r.executor, leader: r.task.leader, risk: r.task.risk, ...taskSensitivity(r.task), sensitive_override: r.sensitive_override || null, deepseek_max_attempts: r.deepseek_max_attempts ?? 2, attempt: r.attempt, next_executor: r.next_executor || null, error: r.error || null });
 
 async function updateWeb(store, run) {
@@ -166,7 +167,7 @@ async function runTask(options, store) {
     });
     print({ ...short(run), state_directory: dir, web });
     recorded = true; ledger('start', id, '--mode', executor === task.leader ? 'self' : 'delegated', '--title', `${displayName(executor)}：${task.id}（第 ${run.attempt} 次）`);
-    if (executor !== 'deepseek') {
+    if (executor === 'claude') {
       const deadline = Date.now() + task.timeout_seconds * 1000;
       while (store.getRun(id).status === 'RUNNING' && !control.signal.aborted && Date.now() < deadline) await sleep(250);
       const current = store.getRun(id);
@@ -174,13 +175,17 @@ async function runTask(options, store) {
       run.result = { exit_code: null, stop_reason: control.signal.aborted ? 'cancelled' : 'timeout', duration_ms: Date.now() - Date.parse(run.started_at), stdout: '' };
     } else {
       const patch = path.join(dir, 'worker.patch.yml');
-      textFile(patch, workerPatch);
+      if (executor === 'deepseek') textFile(patch, workerPatch);
       const prompt = makePrompt(task, run, previous);
       textFile(path.join(dir, 'prompt.txt'), prompt);
       let lastCheck = 0;
-      run.result = await execute([preflight.node, preflight.dsh_bin, '--profile', 'headless', '--patch', patch, prompt], {
-        cwd: task.workspace, env: childEnvironment(preflight.dsh_home, preflight.credential), timeoutSeconds: task.timeout_seconds,
-        logPrefix: path.join(dir, 'worker'), secrets: preflight.secrets, signal: control.signal,
+      const argv = executor === 'codex'
+        ? ['python3', CODEX_TASK, path.join(dir, 'prompt.txt'), '--cd', task.workspace, '--sandbox', 'workspace-write', '--timeout', String(task.timeout_seconds)]
+        : [preflight.node, preflight.dsh_bin, '--profile', 'headless', '--patch', patch, prompt];
+      const env = executor === 'codex' ? { ...process.env, AGENT_HUB_LEDGER_SKIP: '1' } : childEnvironment(preflight.dsh_home, preflight.credential);
+      run.result = await execute(argv, {
+        cwd: task.workspace, env, timeoutSeconds: task.timeout_seconds,
+        logPrefix: path.join(dir, 'worker'), secrets: preflight?.secrets, signal: control.signal,
         onSpawn: async child => { run.child = child; await store.transaction(data => { store.saveRun(run); data.leases[id].child = child; }); },
         onHeartbeat: async () => {
           if (Date.now() - lastCheck < 30000) return;
@@ -190,6 +195,18 @@ async function runTask(options, store) {
           process.stderr.write(JSON.stringify({ run_id: id, status: 'RUNNING', elapsed_seconds: Math.round((Date.now() - Date.parse(run.started_at)) / 1000) }) + '\n');
         },
       });
+      if (executor === 'codex') {
+        // execute 已将原始 stdout 存入 worker.stdout.log；报告仅使用最后的 summary。
+        const raw = run.result.stdout;
+        for (let start = raw.indexOf('{'); start !== -1; start = raw.indexOf('{', start + 1)) {
+          let summary;
+          try { summary = JSON.parse(raw.slice(start)); } catch { continue; }
+          if (!summary || typeof summary !== 'object' || Array.isArray(summary)) continue;
+          if (typeof summary.final === 'string') run.result.stdout = summary.final;
+          if (summary.jev_screen !== undefined) run.jev_screen = summary.jev_screen;
+          break;
+        }
+      }
     }
     await collectFiles(store, run);
     const unexpected = await store.transaction(data => {
@@ -267,7 +284,7 @@ async function stopRun(options, store) {
 }
 
 async function verify(store, run) {
-  if (run.status === 'RUNNING') fail('WRITER_RUNNING', '先结束开发；Claude/Codex 执行使用 collect --finish');
+  if (run.status === 'RUNNING') fail('WRITER_RUNNING', '先结束开发；Claude 受监督执行使用 collect --finish');
   const leaseId = uid('verify'), control = new AbortController();
   const sig = () => control.abort();
   await store.transaction(data => reserve(data, { id: leaseId, run_id: run.id, kind: 'verify', workspace: run.task.workspace, scopes: [run.task.workspace], owner: identity() }, run.key, run.task, { verification: true }));
@@ -329,7 +346,7 @@ async function collect(options, store) {
   let run = store.getRun(options['run-id']);
   if ([options.finish, options.verify, Boolean(options.review)].filter(Boolean).length > 1) fail('ARGUMENT_ERROR', '--finish/--verify/--review 分开执行');
   if (options.finish) {
-    if (!['claude', 'codex'].includes(run.executor) || run.status !== 'RUNNING') fail('NOT_MANUAL_EXECUTOR', '--finish 仅用于正在运行的 Claude/Codex 受监督执行任务');
+    if (run.executor !== 'claude' || run.status !== 'RUNNING') fail('NOT_MANUAL_EXECUTOR', '--finish 仅用于正在运行的 Claude 受监督执行任务');
     await store.transaction(data => {
       const bad = checkWave(data, run.task.workspace);
       run.status = bad.length ? 'BLOCKED' : 'REVIEW'; run.finished_at = now();

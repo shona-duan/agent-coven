@@ -24,12 +24,13 @@ disable-model-invocation: true
 | 执行者 | 适合 | 入口 |
 |---|---|---|
 | DeepSeek（优先） | 中文文案/文档/注释/i18n、批量机械修改、样板代码、范围明确的简单 bug、补测试 | `run --executor deepseek`（脚本直接调用 Harness） |
-| Codex | 需求已明确、需在仓库内一口气做完并跑测试修到绿 | `run --executor codex` 取锁 → 组长用 `~/agent-hub/codex_task.py` 派活 → `collect --finish` |
-| Claude | 需求模糊需先理清、跨文件重构/架构、需要解释的工作 | `run --executor claude` 取锁 → 组长用 `claude -p` 派活（或 Claude 组长亲自做）→ `collect --finish` |
+| Codex | 需求已明确、需在仓库内一口气做完并跑测试修到绿 | `run --executor codex` 一条命令跑完（脚本按任务包生成说明、调 `codex_task.py`、自动收集并初筛），直接进 REVIEW；耗时长时用后台运行 |
+| Claude | 需求模糊需先理清、跨文件重构/架构、需要解释的工作 | `run --executor claude` 取锁 → 组长亲自做（或用 `claude -p` 派活）→ `collect --finish` |
 
 - 两家都适合时按 profile 里的擅长和额度偏好派；某家报限额或用户说快用完，转给另一家。
 - 常用组合：需求不明确时 Claude 出方案（写进任务包 brief），Codex 执行。
-- 脚本只管锁、快照、检查和状态门禁，**不调用 Claude/Codex 模型**；它们由组长在锁内派发。
+- 脚本调用 DeepSeek 和 Codex；Claude 执行由组长在锁内进行。
+- **执行者运行期间，组长不在同一工作区写文件**（会被判越界、整轮 BLOCKED）；组长也要改的文件（如需求文档）先写进 write_scope，或等执行者结束再改。
 
 ## Jev 判断员（分诊与初筛）
 
@@ -55,14 +56,14 @@ Jev（TypeSafe System One）只给概率化判断、不写代码，只按输入�
 - **敏感任务绝不下放 DeepSeek**：risk=high，或 brief/写入范围/验收中出现鉴权、登录、密码、token、密钥、加密、签名、权限、支付、计费等词（中英），`run --executor deepseek` 直接报 `SENSITIVE_NOT_DELEGATABLE`。确属误报时在任务包写 `sensitive_override: "原因"` 放行并留痕。Jev 分诊用同一词表。
 - **有外部副作用的动作不外派**：提交、推送、发消息、部署、改全局配置由组长在用户确认后亲自做；执行者提示词已禁止。
 
-**活的大小不设硬门槛**：按“组长自己做预估要几轮调用”判断（≤2 自己做，≥4 倾向派，3 看情况）。派活由脚本自动记账；≥4 轮仍自己做才用 `ledger.mjs task note` 记一条。
+**活的大小**：按“组长自己做预估要几次工具调用 N”判断（≤2 自己做，≥3 且方案已定默认派，见 `rules/collaboration.md`）。派活由脚本自动记账；N≥4 仍自己做才用 `ledger.mjs task note` 记一条。交代里的调用次数用会话计数提示给的实际数，不估。
 
 ## 风险分级（决定审查深度）
 
 | risk | 例子 | 审查 |
 |---|---|---|
 | low | 文案、注释、样板、单文件小改 | 组长看 diff + 自动检查；验收证据可简短 |
-| mid（默认） | 普通功能、多文件 | 组长对照每条验收标准认真审 + 一次无上下文审查（非实现者、不看对话，见 `~/agent-hub/rules/collaboration.md`） |
+| mid（默认） | 普通功能、多文件 | 组长对照每条验收标准认真审 + 一次无上下文审查：`collect` 后跑 `python3 ~/agent-hub/review_task.py --run ~/agent-hub/state/team-dev/runs/<run_id>`（自动选非实现者、不看对话；不要手写审查提示词开子任务） |
 | high | 核心逻辑、安全、数据迁移、大范围重构 | 必须有两家大模型参与：实现者是非组长的 Claude/Codex 时已满足；否则（DeepSeek 实现或组长自己实现）需另一家给 `cross_review` |
 
 不要给低风险任务加额外审查；脚本只对 high 强制双人。
@@ -105,7 +106,7 @@ node "$SKILL_DIR/scripts/dsh.mjs" doctor --workspace /用户指定的绝对路�
 
 - 普通问题 `decision=rework`：写清文件、问题、期望行为、复验方式，复用同一 task id 再派发。DeepSeek 默认最多 2 次调用（首轮 + 1 次返工；`deepseek_max_attempts` 可设 1–3）。
 - 同一方向连续失败两次，审查里写 `strategy_change`；改任务设计写 `plan_adjustment`（范围只能扩不能缩）。
-- **逐级升级**：DeepSeek 用完次数仍需返工，或遇到重复请求解决不了的障碍：`decision=takeover`，默认交给**另一家大模型**（组长 claude → codex，组长 codex → claude），让实现者与验收者分开；`takeover_by` 可指定。不让同一个便宜模型反复磨。然后 `run --executor <takeover_by>` → 修改 → `collect --finish` → `--verify` → 审查。
+- **逐级升级**：DeepSeek 用完次数仍需返工，或遇到重复请求解决不了的障碍：`decision=takeover`，默认交给**另一家大模型**（组长 claude → codex，组长 codex → claude），让实现者与验收者分开；`takeover_by` 可指定。不让同一个便宜模型反复磨。然后 `run --executor <takeover_by>`（codex 一条命令跑完；claude 由组长修改后 `collect --finish`）→ `--verify` → 审查。
 - 授权、环境或关键需求不足：`decision=block` 并说明。真实问题不能因次数用尽而变成通过。
 
 ## 异常与恢复
